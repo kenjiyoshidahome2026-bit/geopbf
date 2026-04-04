@@ -1,4 +1,4 @@
-function nearPoint(index, lng, lat, maxResults = Infinity, maxDistance = Infinity) {
+export function nearPoint(index, lng, lat, maxResults = Infinity, maxDistance = Infinity) {
 	class queue {
 		constructor(compare) { this.d = []; this.c = compare; }
 		get length() { return this.d.length; }
