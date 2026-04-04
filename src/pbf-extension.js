@@ -437,7 +437,7 @@
 	function _nearPoint([x, y], maxCount = 1, maxDistance = Infinity) {
 		const self = this;
 		self.kdbush || self.points();
-		#inline("oRWKMw3P");
+	//	#inline("oRWKMw3P");
 		return nearPoint(self.kdbush, x, y, maxCount, maxDistance).map(t => self.kdIndex[t]);
 	}
 
