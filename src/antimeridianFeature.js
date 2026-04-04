@@ -1,4 +1,4 @@
-function antimeridianFeature(feature) {
+export function antimeridianFeature(feature) {
 	const { PI, sin, cos, sqrt, asin, atan2, floor, round, abs } = Math;
 	const d2r = PI / 180, r2d = 180 / PI;
 	const p = feature.properties = feature.properties || {}, geom = feature.geometry, type = geom.type;
