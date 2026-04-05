@@ -1,4 +1,5 @@
 import PBF from "./PBF.js";
+import {nearPoint} from "./nearPoint.js";
 const gz = (flag, file) => flag ? gzip(file, true) : file;
 const setGetter = (obj, name, func) => { 
     const proto = (obj || {}).prototype || {};
