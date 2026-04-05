@@ -1,12 +1,6 @@
-import {antimeridianFeature} from "./antimeridianFeature.js";
+import Pbf from 'pbf';
 import {bufferTub} from "./bufferTub.js";
-////---------------------------------------------------------------------------------------------------------
-const thenEach = async(a, func) => { const n = a.length;
-    for (let i = 0; i < n; i++) await func(a[i],i).catch(console.error);
-};
-const thenMap = async(a, func) => { const n = a.length, q = [];
-    for (let i = 0; i < n; i++) q.push(await func(a[i],i).catch(console.error)); return q;
-};
+import {antimeridianFeature} from "./antimeridianFeature.js";
 ////---------------------------------------------------------------------------------------------------------
 const isSimpleObject = _ => Object.prototype.toString.call(_) === '[object Object]' && Object.keys(_).length;
 const isNumber = _ => typeof _ == "number";
@@ -32,7 +26,7 @@ class PBF {
         this.noprop = !!options.noprop;
         this.logger = new Logger();
     }
-////------------------------------context---------------------------------------
+////---------------------------------------------------------------------
     name(s) { if (s === undefined) return this._name; this._name = s; return this; }
     description(s) { if (s === undefined) return this._description; this._description = s; return this; }
     lisence(s) { if (s === undefined) return this._lisence; this._lisence = s; return this; }
@@ -52,21 +46,19 @@ class PBF {
     }
     async getPosition() { const self = this;
         const {pbf, keys, e, fmap, props} = self.init();
-        const bufs = [];
+        const bufs = new readBufs();
         let pos;
         pbf.readFields(tag => {
             if (tag === TAGS.NAME) self.name(pbf.readString());
             else if (tag === TAGS.DESCRIPTION) self.description(pbf.readString());
             else if (tag === TAGS.LISENCE) self.lisence(pbf.readString());
             else if (tag === TAGS.KEYS) keys.push(pbf.readString());
-            else if (tag === TAGS.BUFS) bufs.push(pbf.readBytes());
+            else if (tag === TAGS.BUFS) bufs.set(pbf.readBytes());
             else if (tag === TAGS.PRECISION) self.e = Math.pow(10, self._precision = pbf.readVarint());
             else if (tag === TAGS.FARRAY) pos = pbf.pos;
         });
-        const tobuf = v => v.buffer.slice(v.byteOffset, v.byteLength + v.byteOffset);
-        self.bufs = await thenMap(bufs.map(tobuf), dec);
+        self.bufs = await bufs.close();
         self.end = pbf.pos;
-    //	self.bboxPos = self.keys.indexOf("bbox");
         pbf.pos = pos; pbf.readMessage(featureCollection);
         return self;
         function featureCollection(tag) { if (tag !== TAGS.FEATURE) return;
@@ -172,7 +164,7 @@ class PBF {
 ////===============================================================================================
 async function makeKeys(q) { const tub = {};
     const buffs = new bufferTub();
-    await thenEach(q.filter(isSimpleObject), loop);
+    for (let i = 0; i < q.length; i++) isSimpleObject(q[i]) && await loop(q[i]);
     return [Object.keys(tub).sort(), await buffs.close()];
     async function loop(q) {
         for (let key in q) { const v = q[key]; tub[key] = true;

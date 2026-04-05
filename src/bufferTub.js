@@ -4,6 +4,9 @@
 const pipe = async(q, filter) => new Response(new Blob([q]).stream().pipeThrough(filter)).arrayBuffer();
 const enc = q => pipe(q, new CompressionStream("deflate-raw"));
 const dec = q => pipe(q, new DecompressionStream("deflate-raw"));
+const thenMap = async(a, func) => { const n = a.length, q = [];
+    for (let i = 0; i < n; i++) q.push(await func(a[i],i).catch(console.error)); return q;
+};
 ////---------------------------------------------------------------------------------------------------------
 //// bufferTub (ArrayBufferを効率的に、アレイ化)
 ////---------------------------------------------------------------------------------------------------------
@@ -12,6 +15,13 @@ export class bufferTub {
     set(q) { if (q instanceof ArrayBuffer) return abset(this.tub, q); }
     async close() { const a = this.tub.sort((p,q)=>p[1]>q[1]?1:-1).map(t=>t[0]); this.tub = [];
         return thenMap(a, enc);
+    }
+  }
+ export class readBufs { 
+    constructor() { this.tub = []; }
+    set(q) { this.tub.push(q); }
+    async close() { const tobuf = v => v.buffer.slice(v.byteOffset, v.byteLength + v.byteOffset);
+        return thenMap(this.tub.map(tobuf), dec);
     }
 }
 function abcomp(buf1, buf2) {
