@@ -12,6 +12,7 @@
     "vite": "^8.0.1"
   },
   "dependencies": {
+    "native-bucket": "file:../native-bucket",
     "pbf": "^4.0.1",
     "polygon-clipping": "^0.15.7",
     "terser": "^5.46.1"

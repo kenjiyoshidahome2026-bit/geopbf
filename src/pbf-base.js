@@ -369,4 +369,4 @@ async function concatinate(pbfs, name) { pbfs = pbfs.filter(t=> t instanceof PBF
     })).close();
     return pbf.getPosition();
 }
-export default PBF;
+export { PBF };

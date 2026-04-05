@@ -18,7 +18,7 @@
 			}
 		},
 		lib: {
-			entry: resolve(__dirname, 'src/PBFextension.js'), 
+			entry: resolve(__dirname, 'src/pbf-extension.js'), 
 			name: 'geopbf',
 			fileName: 'geopbf',
 			formats: ['iife']

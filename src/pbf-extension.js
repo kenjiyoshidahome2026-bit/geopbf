@@ -1,4 +1,4 @@
-import PBF from "./PBF.js";
+import {PBF} from "./pbf-base.js";
 import {nearPoint} from "./nearPoint.js";
 const gz = (flag, file) => flag ? gzip(file, true) : file;
 const setGetter = (obj, name, func) => { 
@@ -172,7 +172,7 @@ setPrototype(PBF, "load", async function(name, tub) {
     await this.empty(); 
     return this.set(buf);
 });
-
+export { PBF };
 ////===========================================================================================================
 //// Private Implementations
 ////===========================================================================================================
