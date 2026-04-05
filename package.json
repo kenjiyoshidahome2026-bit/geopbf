@@ -12,6 +12,7 @@
     "vite": "^8.0.1"
   },
   "dependencies": {
-    "pbf": "^4.0.1"
+    "pbf": "^4.0.1",
+    "polygon-clipping": "^0.15.7"
   }
 }

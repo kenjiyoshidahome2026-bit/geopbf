@@ -232,7 +232,7 @@ function readValue(self) { const {pbf, bufs, bin} = self;
     case DATATYPE.BOOL: return pbf.readBoolean();
     case DATATYPE.JSON: return JSON.parse(pbf.readString());
     case DATATYPE.BLOB: return blob(pbf.readString());
-    case DATATYPE.FUNC: return eval(pbf.readString());
+    case DATATYPE.FUNC: return new Function(`return ${pbf.readString()}`);
     case DATATYPE.IMAGE: return image(pbf.readString());
     case DATATYPE.DATE: return new Date(pbf.readSVarint()*1000);
     case DATATYPE.BBOX: return new Float32Array(pbf.readPackedDouble());
