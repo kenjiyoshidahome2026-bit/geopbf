@@ -1,14 +1,28 @@
-import { defineConfig } from 'vite'
-import { resolve } from 'path'
+	import { defineConfig } from 'vite'
+	import { resolve } from 'path'
 
-export default defineConfig({
-  build: {
-    lib: {
-      entry: resolve(__dirname, 'src/PBF.js'), 
-      name: 'geopbf',
-      fileName: 'geopbf',
-      formats: ['iife']
-    },
-    outDir: 'dist',
-  }
+	const banner = `/*!
+	* geopbf.js v1.0.0
+	* (c) 2026 Kenji Yoshida
+	* Released under the MIT License.
+	*/`;
+
+	export default defineConfig({
+	build: {
+	  	sourcemap: true,
+    	minify: 'terser',
+ 		terserOptions: {
+			format: {
+				comments: /^\!/, // 「!」で始まるコメント（ライセンス等）を残す設定
+				preamble: banner  // ファイルの最先端に必ずこれを置く設定
+			}
+		},
+		lib: {
+			entry: resolve(__dirname, 'src/PBFextension.js'), 
+			name: 'geopbf',
+			fileName: 'geopbf',
+			formats: ['iife']
+		},
+		outDir: 'dist',
+	}
 })
