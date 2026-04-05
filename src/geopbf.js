@@ -16,21 +16,6 @@ const set = (obj, name, value) => {
     } else Object.entries(name).map(t=>set(obj, ...t))
 }
 ////===========================================================================================================
-async function gzip(file, useWorker) { 
-    async function gzip(file) { const name = file.name.replace(/\.(gz|gzip)$/i,"")+".gz";
-        const stream = file.stream().pipeThrough(new CompressionStream("gzip"));
-        return new File([await new Response(stream).blob()], name, {type:"application/gzip"});
-    }
-    return useWorker? worker(gzip, [file]): gzip(file);
-}
-async function gunzip(file, useWorker) {
-    async function gunzip(file) { const name = file.name.replace(/\.(gz|gzip)$/i,"");
-        const stream = file.stream().pipeThrough(new DecompressionStream("gzip"));
-        return new File([await new Response(stream).blob()], name, {type:"application/octet-stream"});
-    }
-    return useWorker? worker(gunzip, [file]): gunzip(file);
-}
-////===========================================================================================================
 export async function geopbf(q, options = {}) {
     logger.title("geopbf");
     const pbf = await _geopbf(q, options);
@@ -71,6 +56,10 @@ export async function geopbf(q, options = {}) {
             const json = toFeatureCollection(JSON.parse(await file.text()));
             json.name = file.name.split("/").reverse()[0].replace(/\.[^\.]+$/,"");
             return json;
+        }
+        async function gunzip(file) { const name = file.name.replace(/\.(gz|gzip)$/i,"");
+            const stream = file.stream().pipeThrough(new DecompressionStream("gzip"));
+            return new File([await new Response(stream).blob()], name, {type:"application/octet-stream"});
         }
         async function shape2pbf(file) {
             return worker(shpdec, [file, options.encoding||"utf8", options.precision||6]);
