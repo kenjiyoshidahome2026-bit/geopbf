@@ -1,4 +1,4 @@
-import { Bucket, Cache } from 'native-bucket';
+import { Fetch, Bucket, Cache } from 'native-bucket';
 import { PBF } from "./pbf-extension.js";
 class PBFIO {
     constructor(dire) { this.dire = dire; }
@@ -22,6 +22,18 @@ class PBFIO {
             if (ETag === false) break
             (ETag === null)? await this.delete(name) : await _sync(name, ETag);
         }
+    }
+    async fetch(url, fname) {
+        const response = fname? await Fetch(url, {target: fname}): await Fetch(url);
+        const Buff = await response.arrayBuffer();
+        await this.cache(fname, {ETag: null, Buff});
+        return Buff;
+                   const loaded = await Cache("GIS/loaded");
+            let blob = options.nocache? null: await loaded(q);
+            if (!blob) { await loaded(q, blob = await Fetch(q)); }
+            const fname = options.name || q.split("/").reverse()[0];
+            return _geopbf(new File([blob], fname, {type:"application/octet-stream"}));
+
     }
     async load(name) {
         const [val, ETag] = await Promise.all([this.cache(name), this.bucket.etag(name)]).catch(console.error);

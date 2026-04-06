@@ -11,8 +11,8 @@ export async function geopbf(data, options = {}) {
     const isObject = _ => (Object.prototype.toString.call(_) === '[object Object]'||Array.isArray(_));
     const isBuffer = _ => (_ instanceof ArrayBuffer||ArrayBuffer.isView(_));
     const isFile = _ => (_ instanceof Blob && ("name" in _));
-    const isURL = _ => (isString(_) && _.match(/^https?\:\/\//));
-    const isInZip = _ => (isString(_) && _.match(/.+\.zip#.+/i));
+    const isURL = _ => (_.match(/^https?\:\/\//));
+    const isInZip = _ => (_.match(/.+\.zip#.+/i));
     const isPBF = _ => (_ instanceof PBF);
     if (isString(options)) options = {name:options};
     logger.title("geopbf");
@@ -24,30 +24,35 @@ export async function geopbf(data, options = {}) {
         if (isPBF(q)) return q;
         if (isBuffer(q)) return new PBF(options).set(q);
         if (isObject(q)) {
-            logger.info("pbf",`reading from json object`)
-            q = toFeatureCollection(q); q.features.length == 0 && logger.warn("illegal object", q);
-            return await new PBF(options).set(q);
+            logger.pbf(`reading from json object`);
+            q = toFeatureCollection(q);
+            if (q && q.features.length > 0) return await new PBF(options).set(q);
+            logger.warn("illegal object");
+            return new PBF(options);
         }
         if (isFile(q)) { const name = q.name;
-            logger.info("pbf",`reading from file: ${name}`)
+            logger.pbf(`reading from file: ${name}`);
             options.name = options.name || name.replace(/\.[^\.]+$/,"");
-            if (name.match(/\.pbf$/)) return _geopbf(await q.arrayBuffer());
+            if (name.match(/\.(geo)?pbf$/)) return _geopbf(await q.arrayBuffer());
             else if (name.match(/\.(geo|topo)?json$/)||(options.type=="json")) return _geopbf(await file2json(q));
             else if (name.match(/\.zip$/)||(options.type=="zip")) return _geopbf(await shape2pbf(q));
-            else if (name.match(/\.gz(ip)?$/)) return _geopbf(await gunzip(q));
             else if (name.match(/\.xml$/)) return _geopbf(await gmldec(q));
+            else if (name.match(/\.gz(ip)?$/)) return _geopbf(await gunzip(q));
             else logger.error("illegal File: ", q);
         }
-        if (isURL(q)) { logger.info("pbf",`reading from url: ${q}`);
-            if (isInZip(q)) { const [url, target] = q.split("#"); return _geopbf(await zip2file(url, target)); }
-            else if (q.match(/\.zip$/) && options.target) return _geopbf(await zip2file(q, options.target));
-            const loaded = await Cache("GIS/loaded");
-            let blob = options.nocache? null: await loaded(q);
-            if (!blob) { await loaded(q, blob = await Fetch(q)); }
-            const fname = options.name || q.split("/").reverse()[0];
-            return _geopbf(new File([blob], fname, {type:"application/octet-stream"}));
+
+        if (isString(q) && server) {
+            if (isURL(q)) {
+                logger.pbf(`reading from url: ${q}`);
+                if (isInZip(q)) { const [url, target] = q.split("#"); return _geopbf(await server.fetch(url, target)); }
+                else if (q.match(/\.zip$/) && options.target) return _geopbf(await server.fetch(q, options.target));
+                else return _geopbf(await server.fetch(q));
+            }
+            logger.pbf(`reading from server: ${q}`);
+            const pbf = await server.load(q);
+            if(!pbf) logger.warn(`PBF "${q}" not found in server.`);
+            return _geopbf(pbf);
         }
-        if (isString(q) && server) { var pbf = await server.load(q); if(pbf) return pbf; }
         return new PBF(options);
         async function file2json(file) {
             const json = toFeatureCollection(JSON.parse(await file.text()));
@@ -60,10 +65,6 @@ export async function geopbf(data, options = {}) {
         }
         async function shape2pbf(file) {
             return worker(shpdec, [file, options.encoding||"utf8", options.precision||6]);
-        }
-        async function zip2file(url, target) {
-            const f = await unzipit(url, {filter:target, cors:true, save:true});
-            return f[0];
         }
         function toFeatureCollection(q) {
             const fc = a => ({type:"FeatureCollection", features:a});

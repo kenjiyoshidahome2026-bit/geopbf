@@ -2,6 +2,7 @@ let time;
 const isNode = typeof process !== 'undefined' && process.versions != null && process.versions.node != null;
 export class Logger {
 	static log() { isNode? console.log((""+arguments[0]).replace(/%c/g, '')): console.log(...arguments); }
+	static pbf(msg) { this.log(`%c📥 [PBF]%c ${msg}`, 'color: #3498db; font-weight: bold;','color: inherit;'); }
 	static info(msg) { this.log(`%c🔔 [INFO]%c ${msg}`, 'color: #3498db; font-weight: bold;','color: inherit;'); }
 	static warn(msg) { this.log(`%c⚠️ [WARN]%c ${msg}`, 'color: #f1c40f; font-weight: bold;','color: inherit;'); }
 	static error(msg) { this.log(`%c❌ [ERROR]%c ${msg}`, 'color: #e74c3c; font-weight: bold;','color: inherit;') }
