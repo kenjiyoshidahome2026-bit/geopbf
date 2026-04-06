@@ -9,8 +9,6 @@ const setPrototype = (obj, name, func) => {
     const proto = (obj || {}).prototype || {};
     (name in proto) || Object.defineProperty(proto, name, { value: func, configurable: false, enumerable: false});
 };
-const sum = a => { let n = 0; a.forEach(t => n += t); return n; };
-const comma = _ => String(_).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 const thenMap = async(a, func) => { 
     const n = a.length, q = [];
     for (let i = 0; i < n; i++) q.push(await func(a[i], i).catch(console.error)); 
@@ -178,9 +176,9 @@ export { PBF };
 ////===========================================================================================================
 
 function _count() { 
+    const sum = a => { let n = 0; a.forEach(t => n += t); return n; };
     if (this.counts) return this.counts;
     const counts = [0, 0, 0, 0]; // [Points, Lines, Polygons, TotalCoords]
-    
     const sumup = g => { 
         const { type, coordinates: c } = g; if (!c) return;
         const t = PBF.geometryMap[type];
@@ -193,7 +191,6 @@ function _count() {
         case 5: counts[2] += c.length; counts[3] += sum(c.map(t => sum(t.map(u => u.length)))); break;
         }
     };
-    
     this.each(i => { 
         const g = this.getGeometry(i);
         if (this.getType(i) === "GeometryCollection") g.geometries.forEach(sumup);
@@ -203,6 +200,7 @@ function _count() {
 }
 
 function _lint() { 
+    const comma = _ => String(_).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
     var self = this; let str = [];
     const count = [0,0,0,0,0,0,0,0]; 
     self.each((i, fmap) => count[fmap[2]]++);

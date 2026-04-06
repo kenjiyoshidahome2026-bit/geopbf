@@ -1,65 +1,27 @@
+let time;
+const isNode = typeof process !== 'undefined' && process.versions != null && process.versions.node != null;
 export class Logger {
-	constructor() {
-		this.time;
-		this.styles = {
-			title: 'background: #2c3e50; color: #ecf0f1; padding: 2px 10px; border-radius: 5px; font-size: 1.5em;',
-			info: 'color: #3498db; font-weight: bold;',
-			success: 'color: #2ecc71; font-weight: bold;',
-			warn: 'color: #f1c40f; font-weight: bold;',
-			error: 'color: #e74c3c; font-weight: bold;',
-			perf: 'color: #00FFFF; font-weight: bold;', // For timing
-			data: 'color: #e67e22; font-weight: bold;',    // For counts/sizes
-			inherit: 'color: inherit;',
-		};
-		this.icons = {
-			pbf: "📥", anchor: "⚓", adaptive: "🌀",
-			vw: "🧠", check: "✅", boost: "🚀",
-			dead: "👻", alert: "🚨", time: "⏱️",
-			star: "✨"
-		};
+	static log() { isNode? console.log((""+arguments[0]).replace(/%c/g, '')): console.log(...arguments); }
+	static info(msg) { this.log(`%c🔔 [INFO]%c ${msg}`, 'color: #3498db; font-weight: bold;','color: inherit;'); }
+	static warn(msg) { this.log(`%c⚠️ [WARN]%c ${msg}`, 'color: #f1c40f; font-weight: bold;','color: inherit;'); }
+	static error(msg) { this.log(`%c❌ [ERROR]%c ${msg}`, 'color: #e74c3c; font-weight: bold;','color: inherit;') }
+	static data(label, count) { this.log(`%c⚓️ [DATA] %c${label}: %c${count.toLocaleString()}%c`, 'color: #e67e22; font-weight: bold;', 'color: inherit;', 'font-weight: bold;', 'font-weight: 400;');}
+	static title(message) { time = performance.now();
+		this.log(`%c ✨ ${message.toUpperCase()} ✨ `, 'background: #2c3e50; color: #ecf0f1; padding: 2px 10px; border-radius: 5px; font-size: 1.2em;');
 	}
-	title(message) { this.time = performance.now();
-		console.log(`%c ${this.icons.star} ${message.toUpperCase()} ${this.icons.star} `, this.styles.title);
+	static success(msg) { const meas = (performance.now() - time).toFixed(2); time = performance.now();
+		this.log(`%c✅" [SUCCESS] %c${msg} in %c${meas}%c [msec]`,'color: #2ecc71; font-weight: bold;', 'color: inherit;', 'color: #00FFFF; font-weight: bold;', 'color: inherit;');
 	}
-	progress(iconName, current, total, label = "Processing") {
+	static progress(current, total) {
 		const percent = Math.min(100, Math.round((current / total) * 100));
-		if (current % Math.ceil(total / 10) === 0 || current === total) {
-			const bar = "▓".repeat(Math.floor(percent / 5)) + "░".repeat(20 - Math.floor(percent / 5));
-			const icon = this.icons[iconName] || "⏳";
-			console.log(`${icon} ${label}: [${bar}] ${percent}% (${current.toLocaleString()}/${total.toLocaleString()})`);
-		}
+		const bar = "▓".repeat(Math.floor(percent / 5)) + "░".repeat(20 - Math.floor(percent / 5));
+		this.log(`⏳ Processing: [${bar}] ${percent}% (${current.toLocaleString()}/${total.toLocaleString()})`);
 	}
-	log(type, iconName, msg) {
-		const icon = this.icons[iconName] || "🔔";
-		const style = this.styles[type] || this.styles.info;
-		console.log(`%c${icon} ${type.toUpperCase()}`, this.styles.base + style, msg);
-	}
-	info(icon, msg)    { this.log("info", icon, msg); }
-	success(msg)       { this.log("success", "check", msg); }
-	warn(msg)          { this.log("warn", "alert", msg); }
-	error(msg)         { this.log("error", "dead", msg); }
-	data(label, count) {
-		console.log(`%c${this.icons.anchor} [DATA] %c${label}: %c${count.toLocaleString()}%c`,
-			this.styles.data, this.styles.inherit, 'font-weight: bold;', 'font-weight: 400;');
-	}
-	success(msg) { const time = (performance.now() - this.time).toFixed(2); this.time = performance.now();
-		console.log(`%c${this.icons.check} [SUCCESS] %c${msg} in %c${time}%c [msec]`,
-			this.styles.success, this.styles.inherit, this.styles.perf, this.styles.inherit);
-	}
-	measure(label, fn) {
-		const start = performance.now();
-		const result = fn();
-		const end = (performance.now() - start).toFixed(2);
-		console.log(`%c${this.icons.time} [PERF] %c${label} completed in %c${end}%c [msec]`,
-			this.styles.perf, this.styles.inherit, this.styles.perf, this.styles.inherit);
-	   return result;
-	}
-	async measureAsync(label, fn) {
+	static async measure(label, fn) {
 		const start = performance.now();
 		const result = await fn();
-		const end = (performance.now() - start).toFixed(2);
-		console.log(`%c${this.icons.time} [PERF] %c${label} completed in %c${end}%c [msec]`,
-			this.styles.perf, this.styles.inherit, this.styles.perf, this.styles.inherit);
-		return result;
+		const meas = (performance.now() - start).toFixed(2);
+		this.log(`%c⏱️ [PERF] %c${label} completed in %c${meas}%c [msec]`,'color: #00FFFF; font-weight: bold;', 'color: inherit;', 'color: #00FFFF; font-weight: bold;', 'color: inherit;');
+	   return result;
 	}
 }
