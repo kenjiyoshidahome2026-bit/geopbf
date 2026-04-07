@@ -1,10 +1,11 @@
 import { Fetch, Bucket, Cache } from 'native-bucket';
 import { PBF } from "./pbf-extension.js";
 class PBFIO {
-    constructor(dire) { this.dire = dire; }
+    constructor(dire) { this.dire = dire||"GIS"; }
     async open() { 
-        this.bucket = await Bucket(this.dire);
-        this.cache = await Cache(this.dire);
+        this.bucket = await Bucket(`${this.dire}/pbf`);
+        this.cache = await Cache(`${this.dire}/pbf`);
+        this.fetchCache = await Cache(`${this.dire}/loaded`);
         if (!this.bucket || !this.cache) { console.error("PBFIO open error: unable to access bucket or cache."); return null; }
         return this;
     }
@@ -23,17 +24,12 @@ class PBFIO {
             (ETag === null)? await this.delete(name) : await _sync(name, ETag);
         }
     }
-    async fetch(url, fname) {
-        const response = fname? await Fetch(url, {target: fname}): await Fetch(url);
-        const Buff = await response.arrayBuffer();
-        await this.cache(fname, {ETag: null, Buff});
-        return Buff;
-                   const loaded = await Cache("GIS/loaded");
-            let blob = options.nocache? null: await loaded(q);
-            if (!blob) { await loaded(q, blob = await Fetch(q)); }
-            const fname = options.name || q.split("/").reverse()[0];
-            return _geopbf(new File([blob], fname, {type:"application/octet-stream"}));
-
+    async fetch(name, useCache = true) {
+        if (useCache) { const v = await this.fetchCache(name); if (v) return v; }
+        const [url, target] = name.split(/\#/);
+        const file = target? await Fetch(url, {target}): await Fetch(url);
+        await this.fetchCache(name, file);
+        return file;
     }
     async load(name) {
         const [val, ETag] = await Promise.all([this.cache(name), this.bucket.etag(name)]).catch(console.error);

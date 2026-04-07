@@ -17,10 +17,13 @@ export async function geopbf(data, options = {}) {
     if (isString(options)) options = {name:options};
     logger.title("geopbf");
     const pbf = await _geopbf(data);
-    logger.success(`geopbf: ${pbf.name} (${pbf.size.toLocaleString()} bytes)`);
-    return pbf;
+    pbf && logger.success(`geopbf: ${pbf.name} (${pbf.size.toLocaleString()} bytes)`);
+    return pbf || new PBF(options);
     async function _geopbf(q) {
-        if (q === undefined || q === null) return new PBF(options);
+        if (q === undefined || q === null) {
+            console.warn("geopbf: no data provided. Returning empty PBF.");
+            return null;
+        }
         if (isPBF(q)) return q;
         if (isBuffer(q)) return new PBF(options).set(q);
         if (isObject(q)) {
@@ -28,32 +31,32 @@ export async function geopbf(data, options = {}) {
             q = toFeatureCollection(q);
             if (q && q.features.length > 0) return await new PBF(options).set(q);
             logger.warn("illegal object");
-            return new PBF(options);
+            return null;
         }
         if (isFile(q)) { const name = q.name;
             logger.pbf(`reading from file: ${name}`);
             options.name = options.name || name.replace(/\.[^\.]+$/,"");
-            if (name.match(/\.(geo)?pbf$/)) return _geopbf(await q.arrayBuffer());
-            else if (name.match(/\.(geo|topo)?json$/)||(options.type=="json")) return _geopbf(await file2json(q));
-            else if (name.match(/\.zip$/)||(options.type=="zip")) return _geopbf(await shape2pbf(q));
-            else if (name.match(/\.xml$/)) return _geopbf(await gmldec(q));
-            else if (name.match(/\.gz(ip)?$/)) return _geopbf(await gunzip(q));
+            if (name.match(/\.(geo)?pbf$/i)) return _geopbf(await q.arrayBuffer());
+            else if (name.match(/\.(geo|topo)?json$/i)||(options.type=="json")) return _geopbf(await file2json(q));
+            else if (name.match(/\.zip$/i)||(options.type=="zip")) return _geopbf(await shape2pbf(q));
+            else if (name.match(/\.xml$/i)) return _geopbf(await gmldec(q));
+            else if (name.match(/\.gz(ip)?$/i)) return _geopbf(await gunzip(q));
             else logger.error("illegal File: ", q);
         }
-
         if (isString(q) && server) {
-            if (isURL(q)) {
+            if (isURL(q)) { const usecache = !options.nocache;
                 logger.pbf(`reading from url: ${q}`);
-                if (isInZip(q)) { const [url, target] = q.split("#"); return _geopbf(await server.fetch(url, target)); }
-                else if (q.match(/\.zip$/) && options.target) return _geopbf(await server.fetch(q, options.target));
-                else return _geopbf(await server.fetch(q));
+                if (isInZip(q)) return _geopbf(await server.fetch(q, usecache));
+                else if (q.match(/\.zip$/) && options.target) return _geopbf(await server.fetch([q, options.target].join("#"), usecache));
+                else return _geopbf(await server.fetch(q, usecache));
             }
             logger.pbf(`reading from server: ${q}`);
             const pbf = await server.load(q);
             if(!pbf) logger.warn(`PBF "${q}" not found in server.`);
             return _geopbf(pbf);
         }
-        return new PBF(options);
+        console.warn("geopbf: illegal data provided. Returning empty PBF.");
+        return null;
         async function file2json(file) {
             const json = toFeatureCollection(JSON.parse(await file.text()));
             json.name = file.name.split("/").reverse()[0].replace(/\.[^\.]+$/,"");
