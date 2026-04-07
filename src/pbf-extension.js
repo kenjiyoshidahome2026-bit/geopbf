@@ -147,7 +147,13 @@ setPrototype(PBF, "shapeFile", async function(options = {}) {
         worker.postMessage({arrayBuffer, name, encoding, level});
     });
 });
-
+export async function pbf2kmz(pbf, name) {
+    const worker = new Worker(new URL('../worker/kmzenc.js', import.meta.url), { type: 'module' });
+    return new Promise(resolve => {
+        worker.onmessage = e => resolve(e.data);
+        worker.postMessage({ arraybuffer: pbf.arrayBuffer, name });
+    });
+}
 setPrototype(PBF, "file", async function(options = {}) {
     const self = this, gzip = !!options.gzip;
     return options.format == "shape" ? await self.shapeFile(options) :

@@ -78,6 +78,14 @@ export async function geopbf(data, options = {}) {
                 worker.postMessage({file, encoding, precision});
             });
         }
+        async function kmz2pbf(file) {
+            const worker = new Worker(new URL('../worker/kmzdec.js', import.meta.url), { type: 'module' });
+            const precision = options.precision || 6;
+            return new Promise(resolve => {
+                worker.onmessage = async e => resolve(e.data ? await new PBF().set(e.data.data) : null);
+                worker.postMessage({ file, precision });
+            });
+        }
         function toFeatureCollection(q) {
             const fc = a => ({type:"FeatureCollection", features:a});
             const f = g => ({type:"Feature", geometry:g, properties:{}});
