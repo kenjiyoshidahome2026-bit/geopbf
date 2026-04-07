@@ -3,7 +3,11 @@ import {pbfio} from "./pbf-io.js";
 import {Logger} from "./logger.js";
 import {topo2geo} from "./topo2geo.js";
 const logger = new Logger();
-const server = await pbfio("GIS").catch(e => { logger.warn("PBFIO initialization failed. Caching will be disabled.", e); return null; });
+let server = null;
+(async () => {
+    server = await pbfio("GIS").catch(e => { logger.warn("PBFIO initialization failed. Caching will be disabled.", e); return null; });
+})();
+//const server = await pbfio("GIS").catch(e => { logger.warn("PBFIO initialization failed. Caching will be disabled.", e); return null; });
 ////===========================================================================================================
 export async function geopbf(data, options = {}) {
     const isString = _ => (typeof _ == "string");
