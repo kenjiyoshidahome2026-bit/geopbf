@@ -138,7 +138,14 @@ setPrototype(PBF, "topojsonFile", async function(flag) {
     return gz(flag, new File([JSON.stringify(this.topojson)], this._name+".topojson", {type:"application/json"})); 
 });
 setPrototype(PBF, "shapeFile", async function(options = {}) {
-    return worker(shpenc, [this.arrayBuffer, this._name, options.encoding, options.level]); 
+    const worker = new Worker(new URL('./shpenc.js', import.meta.url), { type: 'module' });
+    const arrayBuffer = this.arrayBuffer, name = this._name;
+    const encoding = (options.encoding||"utf8").toLowerCase().replace(/[\-\_]/g,"").replace(/shiftjis/,"sjis");
+    const level = options.level || 3;
+    return new Promise(resolve=>{
+        worker.onmessage = async e => resolve(e.data? await new PBF().set(e.data): null);
+        worker.postMessage({arrayBuffer, name, encoding, level});
+    });
 });
 
 setPrototype(PBF, "file", async function(options = {}) {

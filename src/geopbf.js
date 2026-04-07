@@ -1,10 +1,9 @@
 import {PBF} from "./pbf-extension.js";
 import {pbfio} from "./pbf-io.js";
-import {worker} from "./worker.js";
 import {Logger} from "./logger.js";
 import {topo2geo} from "./topo2geo.js";
 const logger = new Logger();
-const server = await pbfio("GIS/pbfDB").catch(e => { logger.warn("PBFIO initialization failed. Caching will be disabled.", e); return null; });
+const server = await pbfio("GIS").catch(e => { logger.warn("PBFIO initialization failed. Caching will be disabled.", e); return null; });
 ////===========================================================================================================
 export async function geopbf(data, options = {}) {
     const isString = _ => (typeof _ == "string");
@@ -67,7 +66,13 @@ export async function geopbf(data, options = {}) {
             return new File([await new Response(stream).blob()], name, {type:"application/octet-stream"});
         }
         async function shape2pbf(file) {
-            return worker(shpdec, [file, options.encoding||"utf8", options.precision||6]);
+            const worker = new Worker(new URL('./shpdec.js', import.meta.url), { type: 'module' });
+            const encoding = (options.encoding||"utf8").toLowerCase().replace(/[\-\_]/g,"").replace(/shiftjis/,"sjis");
+            const precision = options.precision || 6;
+            return new Promise(resolve=>{
+                worker.onmessage = async e => resolve(e.data? await new PBF().set(e.data): null);
+                worker.postMessage({file, encoding, precision});
+            });
         }
         function toFeatureCollection(q) {
             const fc = a => ({type:"FeatureCollection", features:a});
