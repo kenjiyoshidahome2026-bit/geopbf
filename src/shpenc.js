@@ -198,7 +198,7 @@ function writeDbf(name, farray, encoding) {
 ////=======================================================================================================================
 self.onmessage = async (e) => {//async function shpenc(arraybuffer, name, encoding, level = 3) {
     const {arraybuffer, name, encoding, level} = e.data;
-    encoding = (encoding||"utf8").toLowerCase().replace(/[\-\_]/g,"").replace(/shiftjis/,"sjis");
+//    encoding = (encoding||"utf8").toLowerCase().replace(/[\-\_]/g,"").replace(/shiftjis/,"sjis");
 	const prj  = `GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]]`;
 	console.log(`--------------------------\n    PBF => Shape File\n--------------------------`)
 	const shpTypes = [["point", 1],["multipoint", 8],["polyline", 3],["polygon", 5]];
