@@ -1,4 +1,4 @@
-import {PBF} from "./pbf-base.js";
+import {PBF} from "../src/pbf-extension.js";
 import {encodeZIP} from "../../native-bucket/src/encodeZIP.js";
 import Encoding from 'encoding-japanese';
 const sum = a => { let s = 0; a.forEach(t=>s+=t); return s; };

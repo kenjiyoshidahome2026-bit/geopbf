@@ -70,7 +70,7 @@ export async function geopbf(data, options = {}) {
             return new File([await new Response(stream).blob()], name, {type:"application/octet-stream"});
         }
         async function shape2pbf(file) {
-            const worker = new Worker(new URL('./shpdec.js', import.meta.url), { type: 'module' });
+            const worker = new Worker(new URL('../worker/shpdec.js', import.meta.url), { type: 'module' });
             const encoding = (options.encoding||"utf8").toLowerCase().replace(/[\-\_]/g,"").replace(/shiftjis/,"sjis");
             const precision = options.precision || 6;
             return new Promise(resolve=>{

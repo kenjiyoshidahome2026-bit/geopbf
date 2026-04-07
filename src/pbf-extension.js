@@ -138,7 +138,7 @@ setPrototype(PBF, "topojsonFile", async function(flag) {
     return gz(flag, new File([JSON.stringify(this.topojson)], this._name+".topojson", {type:"application/json"})); 
 });
 setPrototype(PBF, "shapeFile", async function(options = {}) {
-    const worker = new Worker(new URL('./shpenc.js', import.meta.url), { type: 'module' });
+    const worker = new Worker(new URL('../worker/shpenc.js', import.meta.url), { type: 'module' });
     const arrayBuffer = this.arrayBuffer, name = this._name;
     const encoding = (options.encoding||"utf8").toLowerCase().replace(/[\-\_]/g,"").replace(/shiftjis/,"sjis");
     const level = options.level || 3;
