@@ -39,11 +39,17 @@ self.onmessage = async (e) => {
         }
 
         // ジオメトリ変換 (簡略化して記述)
-        // ... (ここに toKmlGeom ロジック) ...
+            kml += `\t\t<ExtendedData>\n`;
+        for (let key in props) {
+            if (["name", "description", "style", "icon", "bbox"].includes(key)) continue;
+            const val = typeof props[key] === 'object' ? JSON.stringify(props[key]) : props[key];
+            kml += `\t\t\t<Data name="${key}"><value>${val}</value></Data>\n`;
+        }
+        kml += `\t\t</ExtendedData>\n`;
 
+        kml += `\t\t${toKmlGeom(feat.geometry)}\n`;
         kml += `\t</Placemark>\n`;
     });
-
     kml += `</Document>\n</kml>`;
     zipFiles.unshift(new File([kml], `${name}.kml`, { type: "application/vnd.google-earth.kml+xml" }));
 
