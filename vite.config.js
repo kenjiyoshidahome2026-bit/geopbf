@@ -10,6 +10,15 @@
 	export default defineConfig({
 	build: {
 	  	sourcemap: true,
+		rollupOptions: {
+			output: {
+				// 動的インポートを強制的に別ファイルへ分離
+				codeSplitting: true, 
+			},
+			// Node.jsのポリフィルを絶対に入れないためのガード
+			external: ['native-bucket', 'encoding-japanese', 'fast-sjis-encoder']
+		},
+	//	inlineDynamicImports: false,
     	minify: 'terser',
  		terserOptions: {
 			format: {
@@ -21,7 +30,7 @@
 			entry: resolve(__dirname, 'src/geopbf.js'), 
 			name: 'geopbf',
 			fileName: 'geopbf',
-			formats: ['iife']
+			formats: ['esm']
 		},
 		outDir: 'dist',
 	}

@@ -1,6 +1,15 @@
-import {PBF} from "../src/pbf-extension.js";
+import {PBF} from "../src/pbf-base.js";
 import {encodeZIP} from "../../native-bucket/src/encodeZIP.js";
-import Encoding from 'encoding-japanese';
+const getEncoder = async (encoding) => {
+    if (encoding === "sjis") {
+        const Encoding = (await import('https://esm.sh/encoding-japanese@2.1.0')).default;
+        return str => new Uint8Array(Encoding.convert(str, {from: 'UNICODE', to: 'SJIS', type: 'array' }));
+        // const { encode } = (await import('https://esm.run/encoding-japanese-v2'));
+        // return str => encode(str); // これだけでSJISのUint8Arrayが返る    
+    }
+    const utf8Encoder = new TextEncoder();
+    return str => utf8Encoder.encode(str);
+};
 const sum = a => { let s = 0; a.forEach(t=>s+=t); return s; };
 class WBUF {
     constructor(len) {
@@ -18,15 +27,16 @@ class WBUF {
     writeUint32(val, le) { this.view.setUint32(this.pos, val, le); this.pos += 4; return this; }
     writeInt32(val, le) { this.view.setInt32(this.pos, val, le); this.pos += 4; return this; }
     writeFloat64(val, le) { this.view.setFloat64(this.pos, val, le); this.pos += 8; return this; }
-    writeBuffer(buf, bytes, spos = 0) { // bytes（フィールド長）を超える分は書き込まない
-        const a = new Uint8Array(buf);
-        let len = Math.min(bytes || a.byteLength - spos, this.bytes.byteLength - this.pos);
-        while (len--) this.bytes[this.pos++] = a[spos++];
+    writeBuffer(buf, bytes, spos = 0) {
+        const src = new Uint8Array(buf);
+        const len = Math.min(bytes || src.byteLength - spos, this.bytes.byteLength - this.pos);
+        this.bytes.set(src.subarray(spos, spos + len), this.pos);
+        this.pos += len;
         return this;
     }
 }
 ////=======================================================================================================================
-function writeShp(name, farray, type) {
+function writeShp(pbf, name, farray, type) {
     var bbox = null;
     var shxBytes = 100 + farray.length * 8;
     var SHX = new WBUF(shxBytes).position(100); // jump to record section
@@ -95,21 +105,21 @@ function writeShp(name, farray, type) {
     }
 }
 ////--------------------------------------------------------------------------------------------------------------------------	
-function writeDbf(name, farray, encoding) {
+function writeDbf(pbf, name, farray, encoding, encoder) {
     const parray = farray.map(t=>Array.isArray(t)?t[0]:t), recordSize = farray.length;
     const props = parray.map(i=>pbf.getProperties(i));
-    const encoder = (() => {
-        if (encoding == "sjis") {
-            return str => {
-                const unicodeArray = Encoding.stringToCodePoints(str);
-                const sjisArray = Encoding.convert(unicodeArray, { to: 'SJIS', from: 'UNICODE' });
-                return new Uint8Array(sjisArray);
-            };
-        } else {
-            const enc = new TextEncoder();
-            return s => enc.encode(s);
-        }
-    })();
+    // const encoder = (() => {
+    //     if (encoding == "sjis") {
+    //         return str => {
+    //             const unicodeArray = Encoding.stringToCodePoints(str);
+    //             const sjisArray = Encoding.convert(unicodeArray, { to: 'SJIS', from: 'UNICODE' });
+    //             return new Uint8Array(sjisArray);
+    //         };
+    //     } else {
+    //         const enc = new TextEncoder();
+    //         return s => enc.encode(s);
+    //     }
+    // })();
     const stringify = q => {
         return "{"+Object.entries(q).map(([k,v])=>`"${k}":${JSON.stringify(v instanceof ImageData?{}:v)}`).join(",")+"}";
     }
@@ -156,7 +166,8 @@ function writeDbf(name, farray, encoding) {
     const headerBytes = 32 + fields.length * 32 +1;
     const recordBytes = sum(fields.map(t=>t.length))+1;
     const fileBytes = headerBytes + recordSize * recordBytes + 1;
-    const LDID = encoding == "sjis"? 0x13:0;
+ //   const LDID = encoding == "sjis"? 0x13:0;
+    const LDID = encoding == "sjis" ? 0x13 : 0x4B; // UTF-8なら0x4Bが一般的
     const yyyymmdd = d => { const L2 = d=>(d > 9? "":"0")+d;
         return d.getFullYear() + L2(d.getMonth()) + L2(d.getDate());
     };
@@ -166,11 +177,16 @@ function writeDbf(name, farray, encoding) {
     var DBF = new WBUF(fileBytes).writeUint8(3).writeUint8(Y - 1900).writeUint8(M).writeUint8(D)
         .writeUint32(recordSize, true).writeUint16(headerBytes, true).writeUint16(recordBytes, true).skip(17)
         .writeUint8(LDID).skip(2)
-    fields.reduce((pos, {name,type,length,precision}) => {
-        DBF.writeBuffer(encoder(name), 11).writeUint8(type.charCodeAt(0)).writeUint32(pos, true)
-        .writeUint8(length).writeUint8(precision).skip(14);
-        return pos + 32;
-    }, 1);
+    // fields.reduce((pos, {name,type,length,precision}) => {
+    //     DBF.writeBuffer(encoder(name), 11).writeUint8(type.charCodeAt(0)).writeUint32(pos, true)
+    //     .writeUint8(length).writeUint8(precision).skip(14);
+    //     return pos + 32;
+    // }, 1);
+    fields.reduce((dataOffset, { name, type, length, precision }) => {
+        DBF.writeBuffer(encoder(name), 11).writeUint8(type.charCodeAt(0)).writeUint32(dataOffset, true)
+           .writeUint8(length).writeUint8(precision).skip(14);
+        return dataOffset + length;
+    }, 1); // 削除フラグ分の 1 バイトから開始
     DBF.writeUint8(0x0d);
     const badname = {};
     props.forEach(rec => { DBF.writeUint8(0x20);
@@ -179,7 +195,9 @@ function writeDbf(name, farray, encoding) {
             let value = rec[name]; if (value===undefined) return DBF.skip(length);
             switch (type) {
             case 'L': DBF.writeUint8(!!value ? 84 : 70); break;
-            case 'N': DBF.writeBuffer(encoder(fill(value.toFixed(precision), length))); break;
+            case 'N': //DBF.writeBuffer(encoder(fill(value.toFixed(precision), length))); break;
+                const numStr = value.toFixed(precision).padStart(length, " ");
+                DBF.writeBuffer(encoder(numStr));
             case 'D': DBF.writeBuffer(encoder(yyyymmdd(value)), length); break;
             case 'C': 
                 if (value instanceof ImageData||value instanceof Blob) {
@@ -197,8 +215,8 @@ function writeDbf(name, farray, encoding) {
 }
 ////=======================================================================================================================
 self.onmessage = async (e) => {//async function shpenc(arraybuffer, name, encoding, level = 3) {
-    const {arraybuffer, name, encoding, level} = e.data;
-//    encoding = (encoding||"utf8").toLowerCase().replace(/[\-\_]/g,"").replace(/shiftjis/,"sjis");
+    const {arraybuffer, name, encoding} = e.data;
+    const encoder = await getEncoder(encoding);
 	const prj  = `GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]]`;
 	console.log(`--------------------------\n    PBF => Shape File\n--------------------------`)
 	const shpTypes = [["point", 1],["multipoint", 8],["polyline", 3],["polygon", 5]];
@@ -210,20 +228,20 @@ self.onmessage = async (e) => {//async function shpenc(arraybuffer, name, encodi
 	});
 	pbf.bufs.length && console.warn("Binary(file/images) data will be lost in shape.")
 	const single = sum(types.map(t=>t.length? 1:0))==1;
-	const zip = [];
+	const zipFiles = [];
 	shpTypes.forEach(([shpType, shpCode], i)=>{ if (!types[i].length) return;
 		const fname = name + (single?"":"_"+shpType);
-		zip.push(...writeShp(fname, types[i], shpCode));
-		zip.push(writeDbf(fname, types[i], encoding));
-        zip.push(new File([prj], fname + '.prj', {type:"application/octet-stream"}));
-        zip.push(new File([encoding], fname + '.cpg', {type:"text/plain"}));
+		zipFiles.push(...writeShp(pbf, fname, types[i], shpCode));
+		zipFiles.push(writeDbf(pbf, fname, types[i], encoding, encoder));
+        zipFiles.push(new File([prj], fname + '.prj', {type:"application/octet-stream"}));
+        zipFiles.push(new File([encoding], fname + '.cpg', {type:"text/plain"}));
 	});
-	console.log(`preparing deflation... (compression level: ${level})`);
-	let cname = "";
-	const update = v => v.currentFile == cname || console.log("deflating file: " + ((cname = v.currentFile)||"done"), "progression: " + v.percent.toFixed(2) + " %");
-	const file = await encodeZIP(zip, name+".zip");
+	console.log(`preparing deflation...`);
+//	let cname = "";
+//	const update = v => v.currentFile == cname || console.log("deflating file: " + ((cname = v.currentFile)||"done"), "progression: " + v.percent.toFixed(2) + " %");
+	const file = await encodeZIP(zipFiles, name+".zip");
 // //	console.log(blob)
 // 	const file = new File([blob], name+".zip", {type:"application/zip", lastModified:new Date()});
-	console.log(" => Done : ", file);
+	console.log(" => Done : ", file.name, "size: " + file.size.toLocaleString() + " bytes");
 	self.postMessage(file);
 };

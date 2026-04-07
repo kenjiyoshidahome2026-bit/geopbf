@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "encoding-japanese": "^2.2.0",
+    "fast-sjis-encoder": "^1.1.1",
     "native-bucket": "file:../native-bucket",
     "pbf": "^4.0.1",
     "polygon-clipping": "^0.15.7",

@@ -1,10 +1,13 @@
-import { Fetch, Bucket, Cache } from 'native-bucket';
+//import {nativeBucket} from 'native-bucket';
 import { PBF } from "./pbf-extension.js";
 class PBFIO {
     constructor(dire) { this.dire = dire||"GIS"; }
     async open() { 
+        const {nativeBucket} = await import('native-bucket');
+        const {Bucket, Cache, Fetch} = await nativeBucket();
         this.bucket = await Bucket(`${this.dire}/pbf`);
         this.cache = await Cache(`${this.dire}/pbf`);
+        this.fetch = Fetch;
         this.fetchCache = await Cache(`${this.dire}/loaded`);
         if (!this.bucket || !this.cache) { console.error("PBFIO open error: unable to access bucket or cache."); return null; }
         return this;
@@ -27,7 +30,7 @@ class PBFIO {
     async fetch(name, useCache = true) {
         if (useCache) { const v = await this.fetchCache(name); if (v) return v; }
         const [url, target] = name.split(/\#/);
-        const file = target? await Fetch(url, {target}): await Fetch(url);
+        const file = target? await this.fetch(url, {target}): await Fetch(url);
         await this.fetchCache(name, file);
         return file;
     }
@@ -41,7 +44,7 @@ class PBFIO {
             if (val) await this.cache(name, null);
             return null;
         }
-        return new PBF().set(_sync(name, ETag));
+        return new PBF().set(await _sync(name, ETag));
     }
     async save(pbf) {
         const name = pbf.name(); if (!name) { console.error("can't save pbf widthout name."); return null; }

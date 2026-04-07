@@ -1,4 +1,4 @@
-import {PBF} from "../src/pbf-extension.js";
+import {PBF} from "../src/pbf-base.js";
 import {decodeZIP} from "../../native-bucket/src/decodeZIP.js";
 ////-------------------------------------------------------------------------------------------------------
 const view = a => new DataView(a.buffer, a.byteOffset, a.byteLength);
