@@ -1,15 +1,8 @@
-/**
- * worker/worker.js
- */
-
 // worker ディレクトリ内の JS ファイルを Worker として一括インポート
 // '?worker' クエリを付けることで、Vite はこれらを Worker コンストラクタとして処理します
-const workerModules = import.meta.glob('./*.js', { 
-    eager: true, 
-    query: '?worker' 
-});
+const workerModules = import.meta.glob('./*.js', { eager: true, query: '?worker' });
 
-export async function run(type, data) {
+export async function worker(type, data) {
     // 例: type='shpdec' なら './shpdec.js' というキーでコンストラクタを探す
     const key = `./${type}.js`;
     const WorkerClass = workerModules[key]?.default;

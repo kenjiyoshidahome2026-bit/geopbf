@@ -1,4 +1,4 @@
-import {run} from "../worker/worker.js"; // worker/ フォルダのランチャーをインポート
+import {worker} from "../worker/worker.js"; // worker/ フォルダのランチャーをインポート
 import {PBF} from "./pbf-extension.js";
 import {pbfio} from "./pbf-io.js";
 import {Logger} from "./logger.js";
@@ -23,7 +23,7 @@ export async function geopbf(data, options = {}) {
     return pbf || new PBF(options);
     async function _geopbf(q) {
         if (q === undefined || q === null) {
-            console.warn("geopbf: no data provided. Returning empty PBF.");
+            logger.warn("geopbf: no data provided. Returning empty PBF.");
             return null;
         }
         if (isPBF(q)) return q;
@@ -38,7 +38,7 @@ export async function geopbf(data, options = {}) {
         if (isFile(q)) { const name = q.name;
             logger.pbf(`reading from file: ${name}`);
             if (await isGzip(q)) {
-                console.log("Gzip detected by magic number.");
+                logger.log("Gzip detected by magic number.");
                 return _geopbf(await gunzip(q));
             }           
             options.name = options.name || name.replace(/\.[^\.]+$/,"");
@@ -62,21 +62,26 @@ export async function geopbf(data, options = {}) {
             if(!pbf) logger.warn(`PBF "${q}" not found in server.`);
             return _geopbf(pbf);
         }
-        console.warn("geopbf: illegal data provided. Returning empty PBF.");
+        logger.warn("geopbf: illegal data provided. Returning empty PBF.");
         return null;
         async function file2json(file) {
-            const json = toFeatureCollection(JSON.parse(await file.text()));
-            json.name = file.name.split("/").reverse()[0].replace(/\.[^\.]+$/,"");
-            return json;
-        }
-        async function gunzip(file) { const name = file.name.replace(/\.(gz|gzip)$/i,"");
-            const stream = file.stream().pipeThrough(new DecompressionStream("gzip"));
-            return new File([await new Response(stream).blob()], name, {type:"application/octet-stream"});
+            if (file.name.match(/\.geojson/i) && file.size > 100 * 1024 * 1024) {// 100MB を超える GeoJSON はストリーミングパーサーで処理
+                logger.pbf(`bih geojson detected. Using streaming parser.`);
+                return await decoder("json", file).catch(e => { logger.error("Failed to parse GeoJSON with streaming parser: ", e); return null; } );
+            }
+            try {
+                const json = toFeatureCollection(JSON.parse(await file.text()));
+                json.name = file.name.split("/").reverse()[0].replace(/\.[^\.]+$/,"");
+                return json;
+            } catch (e) {
+                logger.error("Failed to parse GeoJSON: ", e);
+                return null;
+            }
         }
         async function decoder(func, file) {
             const precision = options.precision || 6;
             const encoding = (options.encoding||"utf8").toLowerCase().replace(/[\-\_]/g,"").replace(/shiftjis/,"sjis");
-            const res = await run(func+"dec", { file, precision, encoding });
+            const res = await worker(func+"dec", { file, precision, encoding });
             return res.data? new PBF(options).set(res.data): null;
         }
         function toFeatureCollection(q) {
@@ -91,7 +96,7 @@ export async function geopbf(data, options = {}) {
     }
 }
 ////===========================================================================================================
-//// I/O & Export
+//// conpress and decompress helpers
 ////===========================================================================================================
 export async function isGzip(file) {
     if (!(file instanceof Blob)) return false;
@@ -116,7 +121,7 @@ export async function gzip(file) {
 ////===========================================================================================================
 async function gz(flag, file) { return flag? gzip(file): file; }
 async function encoder(func, pbf) {
-    const res = await run(func+"enc", { arraybuffer: pbf.arrayBuffer, name: pbf._name });
+    const res = await worker(func+"enc", { arraybuffer: pbf.arrayBuffer, name: pbf._name });
     return res.data;
 }
 ////===========================================================================================================
