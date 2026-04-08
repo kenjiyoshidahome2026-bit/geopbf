@@ -122,7 +122,10 @@ async function encoder(func, pbf) {
 });
 ////===========================================================================================================
 async function save() {
-    server? await server.save(this): logger.warn("No server available. Save operation skipped.");
+    if (!server) return logger.warn("No server available. Save operation skipped.");
+    const name = await server.save();
+    if (!name) logger.error("Failed to save PBF to server.");
+    return await server.load(name);
 }
 async function pbfFile(flag) {
     return gz(flag, new File([this.arrayBuffer], (this._name)+".pbf", {type:"application/x-geopbf"})); 
