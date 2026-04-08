@@ -3,6 +3,7 @@ import {PBF} from "./pbf-extension.js";
 import {pbfio} from "./pbf-io.js";
 import {Logger} from "./logger.js";
 import {topo2geo} from "./topo2geo.js";
+import {gzip, gunzip, isGzip} from "../../native-bucket/src/gzip.js";
 const logger = new Logger();
 let server = null;
 (async () => {server = await pbfio("GIS").catch(e => { logger.warn("PBFIO initialization failed. Caching will be disabled.", e); return null; });})();
@@ -43,11 +44,11 @@ export async function geopbf(data, options = {}) {
             }           
             options.name = options.name || name.replace(/\.[^\.]+$/,"");
             if (name.match(/\.(geo)?pbf$/i)) return _geopbf(await q.arrayBuffer());
-            else if (name.match(/\.(geo|topo)?json$/i)||(options.type=="json")) return _geopbf(await file2json(q));
+            else if (name.match(/\.(geo|topo)?json$/i)) return _geopbf(await file2json(q));
             else if (name.match(/\.zip$/i)) return _geopbf(await decoder('shp', q));
             else if (name.match(/\.km[lz]$/i)) return _geopbf(await decoder('kmz', q));
             else if (name.match(/\.[gx]ml$/i)) return _geopbf(await decoder('gml', q));
-         //   else if (name.match(/\.gz(ip)?$/i)) return _geopbf(await gunzip(q));
+            else if (name.match(/\.gz(ip)?$/i)) return _geopbf(await gunzip(q));
             else logger.error("illegal File: ", q);
         }
         if (isString(q) && server) {
@@ -94,29 +95,6 @@ export async function geopbf(data, options = {}) {
             (q.type == "GeometryCollection")?fc(q.map(f)): fc([]);
         }
     }
-}
-////===========================================================================================================
-//// conpress and decompress helpers
-////===========================================================================================================
-export async function isGzip(file) {
-    if (!(file instanceof Blob)) return false;
-    const buf = new Uint8Array(await file.slice(0, 2).arrayBuffer());
-    return buf[0] === 0x1f && buf[1] === 0x8b;
-}
-export async function gunzip(file) {
-    if (file instanceof Blob && await isGzip(file)) {
-        const name = file.name.replace(/\.(gz|gzip)$/i,"");
-        const stream = file.stream().pipeThrough(new DecompressionStream("gzip"));
-        return new File([await new Response(stream).blob()], name, {type:"application/octet-stream"});
-    }
-    return file;
-}
-export async function gzip(file) {
-    if (file instanceof Blob && !(await isGzip(file))) {
-        const stream = new Response(file).body.pipeThrough(new CompressionStream("gzip"));
-        return new File([await new Response(stream).blob()], file.name+".gz", {type:"application/gzip"});
-    }
-    return file;
 }
 ////===========================================================================================================
 async function gz(flag, file) { return flag? gzip(file): file; }

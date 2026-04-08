@@ -8,10 +8,20 @@ const banner = `/*!
 */`;
 
 export default defineConfig({
-    worker: {
-        format: 'es', 
-    },
-    build: {
+		resolve: {
+			alias: {
+				// "native-bucket" というインポートを、ローカルのソースファイルに直接紐付ける
+				'native-bucket': resolve(__dirname, '../native-bucket/src/index.js'), 
+				// ↑ もしエントリポイントが index.js でない場合は、正しいファイルパスに変えてください
+			}
+		},
+	    worker: {
+			format: 'es', 
+		},
+		optimizeDeps: {
+        	include: ['native-bucket'] // 開発時に強制的にバンドルに含める
+    	},
+	    build: {
         target: 'esnext', // 修正: arget -> target
         sourcemap: true,
         rollupOptions: {
@@ -23,7 +33,7 @@ export default defineConfig({
                 assetFileNames: 'assets/[name]-[hash][extname]',
             },
             // Node.jsのポリフィルを混入させないための設定
-            external: ['native-bucket', 'encoding-japanese', 'fast-sjis-encoder']
+            external: [ 'encoding-japanese']
         },
         minify: 'terser',
         terserOptions: {

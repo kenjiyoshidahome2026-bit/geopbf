@@ -362,7 +362,7 @@ const set = (obj, name, value) => {
     } else Object.entries(name).map(t=>set(obj, ...t))
 }
 set(PBF, {TAGS, makeKeys, dataType, dataTypeNames, geometryTypes, geometryMap, concatinate});
-set(this, {PBF});
+this && set(this, {PBF});
 async function concatinate(pbfs, name) { pbfs = pbfs.filter(t=> t instanceof PBF);
     if (pbfs.length == 0) return new PBF(); else if (pbfs.length == 1) return pbfs[0];
     const precisions = pbfs.map(t=>t.precision());
