@@ -37,13 +37,17 @@ export async function geopbf(data, options = {}) {
         }
         if (isFile(q)) { const name = q.name;
             logger.pbf(`reading from file: ${name}`);
+            if (await isGzip(q)) {
+                console.log("Gzip detected by magic number.");
+                return _geopbf(await gunzip(q));
+            }           
             options.name = options.name || name.replace(/\.[^\.]+$/,"");
             if (name.match(/\.(geo)?pbf$/i)) return _geopbf(await q.arrayBuffer());
             else if (name.match(/\.(geo|topo)?json$/i)||(options.type=="json")) return _geopbf(await file2json(q));
             else if (name.match(/\.zip$/i)) return _geopbf(await decoder('shp', q));
             else if (name.match(/\.km[lz]$/i)) return _geopbf(await decoder('kmz', q));
             else if (name.match(/\.[gx]ml$/i)) return _geopbf(await decoder('gml', q));
-            else if (name.match(/\.gz(ip)?$/i)) return _geopbf(await gunzip(q));
+         //   else if (name.match(/\.gz(ip)?$/i)) return _geopbf(await gunzip(q));
             else logger.error("illegal File: ", q);
         }
         if (isString(q) && server) {
