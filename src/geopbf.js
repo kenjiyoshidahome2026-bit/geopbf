@@ -1,3 +1,4 @@
+import {run} from "../worker/worker.js"; // worker/ フォルダのランチャーをインポート
 import {PBF} from "./pbf-extension.js";
 import {pbfio} from "./pbf-io.js";
 import {Logger} from "./logger.js";
@@ -39,9 +40,9 @@ export async function geopbf(data, options = {}) {
             options.name = options.name || name.replace(/\.[^\.]+$/,"");
             if (name.match(/\.(geo)?pbf$/i)) return _geopbf(await q.arrayBuffer());
             else if (name.match(/\.(geo|topo)?json$/i)||(options.type=="json")) return _geopbf(await file2json(q));
-            else if (name.match(/\.zip$/i)||(options.type=="zip")) return _geopbf(await shape2pbf(q));
-            else if (name.match(/\.kmz$/i)) return _geopbf(await kmz2pbf(q));
-            else if (name.match(/\.xml$/i)) return _geopbf(await gmldec(q));
+            else if (name.match(/\.zip$/i)) return _geopbf(await decoder('shp', q));
+            else if (name.match(/\.km[lz]$/i)) return _geopbf(await decoder('kmz', q));
+            else if (name.match(/\.[gx]ml$/i)) return _geopbf(await decoder('gml', q));
             else if (name.match(/\.gz(ip)?$/i)) return _geopbf(await gunzip(q));
             else logger.error("illegal File: ", q);
         }
@@ -68,30 +69,11 @@ export async function geopbf(data, options = {}) {
             const stream = file.stream().pipeThrough(new DecompressionStream("gzip"));
             return new File([await new Response(stream).blob()], name, {type:"application/octet-stream"});
         }
-        async function shape2pbf(file) {
-            const worker = new Worker(new URL('../worker/shpdec.js', import.meta.url), { type: 'module' });
+        async function decoder(func, file) {
+            const precision = options.precision || 6;
             const encoding = (options.encoding||"utf8").toLowerCase().replace(/[\-\_]/g,"").replace(/shiftjis/,"sjis");
-            const precision = options.precision || 6;
-            return new Promise(resolve=>{
-                worker.onmessage = async e => resolve(e.data? await new PBF().set(e.data): null);
-                worker.postMessage({file, encoding, precision});
-            });
-        }
-        async function kmz2pbf(file) {
-            const worker = new Worker(new URL('../worker/kmzdec.js', import.meta.url), { type: 'module' });
-            const precision = options.precision || 6;
-            return new Promise(resolve => {
-                worker.onmessage = async e => resolve(e.data ? await new PBF().set(e.data.data) : null);
-                worker.postMessage({ file, precision });
-            });
-        }
-        async function gmldec(file) {
-            const worker = new Worker(new URL('../worker/gmldec.js', import.meta.url), { type: 'module' });
-            const precision = options.precision || 6;
-            return new Promise(resolve => {
-                worker.onmessage = async e => resolve(e.data ? await new PBF().set(e.data) : null);
-                worker.postMessage({ file, precision });
-            });
+            const res = await run(func+"dec", { file, precision, encoding });
+            return res.data? new PBF(options).set(res.data): null;
         }
         function toFeatureCollection(q) {
             const fc = a => ({type:"FeatureCollection", features:a});
@@ -107,12 +89,43 @@ export async function geopbf(data, options = {}) {
 ////===========================================================================================================
 //// I/O & Export
 ////===========================================================================================================
-const setPrototype = func => {  const proto = PBF.prototype || {}, name = func.name;
+export async function isGzip(file) {
+    if (!(file instanceof Blob)) return false;
+    const buf = new Uint8Array(await file.slice(0, 2).arrayBuffer());
+    return buf[0] === 0x1f && buf[1] === 0x8b;
+}
+export async function gunzip(file) {
+    if (file instanceof Blob && await isGzip(file)) {
+        const name = file.name.replace(/\.(gz|gzip)$/i,"");
+        const stream = file.stream().pipeThrough(new DecompressionStream("gzip"));
+        return new File([await new Response(stream).blob()], name, {type:"application/octet-stream"});
+    }
+    return file;
+}
+export async function gzip(file) {
+    if (file instanceof Blob && !(await isGzip(file))) {
+        const stream = new Response(file).body.pipeThrough(new CompressionStream("gzip"));
+        return new File([await new Response(stream).blob()], file.name+".gz", {type:"application/gzip"});
+    }
+    return file;
+}
+////===========================================================================================================
+async function gz(flag, file) { return flag? gzip(file): file; }
+async function encoder(func, pbf) {
+    const res = await run(func+"enc", { arraybuffer: pbf.arrayBuffer, name: pbf._name });
+    return res.data;
+}
+////===========================================================================================================
+[save, pbfFile, geojsonFile, topojsonFile, shape, kmz, gml].forEach(func => { 
+    const proto = PBF.prototype || {}, name = func.name;
     (name in proto) || Object.defineProperty(proto, name, { value: func, configurable: false, enumerable: false});
-};
-[pbfFile, geojsonFile, topojsonFile, shape, pbf2kmz, pbf2gml].forEach(setPrototype);
+});
+////===========================================================================================================
+async function save() {
+    server? await server.save(this): logger.warn("No server available. Save operation skipped.");
+}
 async function pbfFile(flag) {
-    return gz(flag, new File([this.arrayBuffer], (this._name)+".pbf", {type:"application/octet-stream"})); 
+    return gz(flag, new File([this.arrayBuffer], (this._name)+".pbf", {type:"application/x-geopbf"})); 
 }
 async function geojsonFile(flag) {
     const a = this.fmap.map((t, i) => (i ? "," : "") + JSON.stringify(this.getFeature(i)));
@@ -123,48 +136,6 @@ async function geojsonFile(flag) {
 async function topojsonFile(flag) {
     return gz(flag, new File([JSON.stringify(this.topojson)], this._name+".topojson", {type:"application/json"})); 
 }
-async function shape(options = {}) {
-    const worker = new Worker(new URL('../worker/shpenc.js', import.meta.url), { type: 'module' });
-    const arrayBuffer = this.arrayBuffer, name = this._name;
-    const encoding = (options.encoding||"utf8").toLowerCase().replace(/[\-\_]/g,"").replace(/shiftjis/,"sjis");
-    const level = options.level || 3;
-    return new Promise(resolve=>{
-        worker.onmessage = async e => resolve(e.data? await new PBF().set(e.data): null);
-        worker.postMessage({arrayBuffer, name, encoding, level});
-    });
-}
-async function pbf2kmz(pbf, name) {
-    const worker = new Worker(new URL('../worker/kmzenc.js', import.meta.url), { type: 'module' });
-    return new Promise(resolve => {
-        worker.onmessage = e => resolve(e.data);
-        worker.postMessage({ arraybuffer: pbf.arrayBuffer, name });
-    });
-}
-async function pbf2gml(pbf, name) {
-    const worker = new Worker(new URL('../worker/gmlenc.js', import.meta.url), { type: 'module' });
-    return new Promise(resolve => {
-        worker.onmessage = e => resolve(e.data);
-        worker.postMessage({ arraybuffer: pbf.arrayBuffer, name });
-    });
-}
-async function file(options = {}) {
-    const self = this, gzip = !!options.gzip;
-    return options.format == "shape" ? await self.shapeFile(options) :
-            options.format == "geojson" ? await self.geojsonFile(gzip) :
-            options.format == "topojson" ? await self.topojsonFile(gzip) : 
-            await self.pbfFile(gzip);
-}
-
-
-// setPrototype(PBF, "put", async function(tub) { return (tub || PBF.io || (PBF.io = await pbfio())).put(this); });
-// setPrototype(PBF, "get", async function(name, tub) {
-//     var buf = await (tub || PBF.io || (PBF.io = await pbfio())).get(name, true);
-//     await this.empty(); 
-//     return this.set(buf);
-// });
-// setPrototype(PBF, "save", async function(tub) { return (tub || PBF.io || (PBF.io = await pbfio())).save(this); });
-// setPrototype(PBF, "load", async function(name, tub) { 
-//     var buf = await (tub || PBF.io || (PBF.io = await pbfio())).load(name, true);
-//     await this.empty(); 
-//     return this.set(buf);
-// });
+async function shape(flag) { return gz(flag, await encoder("shp", this));}
+async function kmz(flag) { return gz(flag, await encoder("kmz", this));}
+async function gml(flag) { return gz(flag, await encoder("gml", this));}
