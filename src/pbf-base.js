@@ -11,7 +11,7 @@ const isBbox = _ => _ && _.length == 4 && _.every(isNumber)
 ////===============================================================================================
 //// class PBF 
 ////===============================================================================================
-const TAGS = { NAME:1, KEYS:2, PRECISION:3, BUFS:4, FARRAY:5, FEATURE:6, GEOMETRY:7, GTYPE:8, LENGTH:9, COORDS:10, VALUE:11, INDEX:12, GARRAY:13, DESCRIPTION:14, LISENCE:15 };
+const TAGS = { NAME:1, KEYS:2, PRECISION:3, BUFS:4, FARRAY:5, FEATURE:6, GEOMETRY:7, GTYPE:8, LENGTH:9, COORDS:10, VALUE:11, INDEX:12, GARRAY:13, DESCRIPTION:14, LICENSE:15 };
 const geometryTypes = ["Point","MultiPoint","LineString","MultiLineString","Polygon","MultiPolygon","GeometryCollection"];
 const geometryMap = {}; geometryTypes.forEach((t,i)=>geometryMap[t] = i);
 const dataTypeNames = ["NULL","BOOL","INTEGER","FLOAT","STRING","DATE","COLOR","FUNC","JSON","BBOX","BLOB","IMAGE"];
@@ -22,15 +22,15 @@ class PBF {
         this.pbf = new Pbf();
         this._name = options.name||"";
         this._description = options.description||"";
-        this._lisence = options.lisence||"";
+        this._license = options.license||"";
         this.e = Math.pow(10, this._precision = options.precision || 6);
         this.noprop = !!options.noprop;
-        this.logger = new Logger();
+        this.keys = [], this.bufs = [], this.fmap = [], this.bin = {}; this.props = [];
     }
 ////---------------------------------------------------------------------
     name(s) { if (s === undefined) return this._name; this._name = s; return this; }
     description(s) { if (s === undefined) return this._description; this._description = s; return this; }
-    lisence(s) { if (s === undefined) return this._lisence; this._lisence = s; return this; }
+    license(s) { if (s === undefined) return this._license; this._license = s; return this; }
     precision(s) { if (s === undefined) return this._precision; this.e = Math.pow(10, this._precision = s); return this; }
     init() { this.keys = [], this.bufs = [], this.fmap = [], this.bin = {}; this.props = []; delete this.end; delete this.ctx; delete this.proj; return this; }
     empty() { this.pbf = new Pbf(); this.init(); this.name(""); return this; }
@@ -48,19 +48,24 @@ class PBF {
     async getPosition() { const self = this;
         const {pbf, keys, e, fmap, props} = self.init();
         const bufs = new readBufs();
-        let pos;
+        let farrayPos; // FARRAYフィールド（タグ+長さ）の開始位置
         pbf.readFields(tag => {
             if (tag === TAGS.NAME) self.name(pbf.readString());
             else if (tag === TAGS.DESCRIPTION) self.description(pbf.readString());
-            else if (tag === TAGS.LISENCE) self.lisence(pbf.readString());
+            else if (tag === TAGS.LICENSE) self.license(pbf.readString());
             else if (tag === TAGS.KEYS) keys.push(pbf.readString());
             else if (tag === TAGS.BUFS) bufs.set(pbf.readBytes());
             else if (tag === TAGS.PRECISION) self.e = Math.pow(10, self._precision = pbf.readVarint());
-            else if (tag === TAGS.FARRAY) pos = pbf.pos;
+            else if (tag === TAGS.FARRAY) farrayPos = pbf.pos;
         });
         self.bufs = await bufs.close();
         self.end = pbf.pos;
-        pbf.pos = pos; pbf.readMessage(featureCollection);
+        pbf.pos = farrayPos;
+        pbf.readMessage((tag, p, end) => {
+            self.bodyPos = p.pos; // 地物データの絶対的な開始位置を記録
+            featureCollection(tag);
+        });
+    //    pbf.readMessage(featureCollection);
         return self;
         function featureCollection(tag) { if (tag !== TAGS.FEATURE) return;
             var fpos, gpos, type, garray, tarray;
@@ -107,6 +112,7 @@ class PBF {
     setHead(keys, bufs) { this.keys = keys; this.bufs = bufs||[]; this.keytub = {};
         this._name && this.pbf.writeStringField(TAGS.NAME, this._name);
         this._description && this.pbf.writeStringField(TAGS.DESCRIPTION, this._description);
+        this._license && this.pbf.writeStringField(TAGS.LICENSE, this._license);
         this._precision == 6 || this.pbf.writeVarintField(TAGS.PRECISION, this._precision);
         this.keys.forEach((t,i)=>{this.pbf.writeStringField(TAGS.KEYS, t); this.keytub[t] = i; });
         this.bufs.forEach((t,i)=>{this.pbf.writeBytesField(TAGS.BUFS, new Uint8Array(t))});

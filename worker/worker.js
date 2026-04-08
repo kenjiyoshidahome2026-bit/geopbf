@@ -1,5 +1,5 @@
 const base = new URL('.', import.meta.url).href;
-
+console.log(`[worker] Base URL: ${base}`);
 export async function run(type, data) {
     return new Promise((resolve, reject) => {
         const worker = new Worker(new URL(`./${type}.js`, base), { type: 'module' });
