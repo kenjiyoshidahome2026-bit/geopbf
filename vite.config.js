@@ -1,37 +1,43 @@
-	import { defineConfig } from 'vite'
-	import { resolve } from 'path'
+import { defineConfig } from 'vite'
+import { resolve } from 'path'
 
-	const banner = `/*!
-	* geopbf.js v1.0.0
-	* (c) 2026 Kenji Yoshida
-	* Released under the MIT License.
-	*/`;
+const banner = `/*!
+* geopbf.js v1.0.0
+* (c) 2026 Kenji Yoshida
+* Released under the MIT License.
+*/`;
 
-	export default defineConfig({
-	build: {
-	  	sourcemap: true,
-		rollupOptions: {
-			output: {
-				// 動的インポートを強制的に別ファイルへ分離
-				codeSplitting: true, 
-			},
-			// Node.jsのポリフィルを絶対に入れないためのガード
-			external: ['native-bucket', 'encoding-japanese', 'fast-sjis-encoder']
-		},
-	//	inlineDynamicImports: false,
-    	minify: 'terser',
- 		terserOptions: {
-			format: {
-				comments: /^\!/, // 「!」で始まるコメント（ライセンス等）を残す設定
-				preamble: banner  // ファイルの最先端に必ずこれを置く設定
-			}
-		},
-		lib: {
-			entry: resolve(__dirname, 'src/geopbf.js'), 
-			name: 'geopbf',
-			fileName: 'geopbf',
-			formats: ['esm']
-		},
-		outDir: 'dist',
-	}
+export default defineConfig({
+    worker: {
+        format: 'es', 
+    },
+    build: {
+        target: 'esnext', // 修正: arget -> target
+        sourcemap: true,
+        rollupOptions: {
+            output: {
+                // Vite 8 では inlineDynamicImports: false の代わりに 
+                // codeSplitting: true を使用して分割を明示します
+                codeSplitting: true, 
+                chunkFileNames: 'chunks/[name]-[hash].js',
+                assetFileNames: 'assets/[name]-[hash][extname]',
+            },
+            // Node.jsのポリフィルを混入させないための設定
+            external: ['native-bucket', 'encoding-japanese', 'fast-sjis-encoder']
+        },
+        minify: 'terser',
+        terserOptions: {
+            format: {
+                comments: /^\!/, 
+                preamble: banner  
+            }
+        },
+        lib: {
+            entry: resolve(__dirname, 'src/geopbf.js'), 
+            name: 'geopbf',
+            fileName: 'geopbf',
+            formats: ['esm']
+        },
+        outDir: 'dist',
+    }
 })
