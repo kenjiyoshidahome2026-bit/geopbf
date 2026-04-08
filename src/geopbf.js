@@ -4,9 +4,7 @@ import {Logger} from "./logger.js";
 import {topo2geo} from "./topo2geo.js";
 const logger = new Logger();
 let server = null;
-(async () => {
-    server = await pbfio("GIS").catch(e => { logger.warn("PBFIO initialization failed. Caching will be disabled.", e); return null; });
-})();
+(async () => {server = await pbfio("GIS").catch(e => { logger.warn("PBFIO initialization failed. Caching will be disabled.", e); return null; });})();
 //const server = await pbfio("GIS").catch(e => { logger.warn("PBFIO initialization failed. Caching will be disabled.", e); return null; });
 ////===========================================================================================================
 export async function geopbf(data, options = {}) {
@@ -42,6 +40,7 @@ export async function geopbf(data, options = {}) {
             if (name.match(/\.(geo)?pbf$/i)) return _geopbf(await q.arrayBuffer());
             else if (name.match(/\.(geo|topo)?json$/i)||(options.type=="json")) return _geopbf(await file2json(q));
             else if (name.match(/\.zip$/i)||(options.type=="zip")) return _geopbf(await shape2pbf(q));
+            else if (name.match(/\.kmz$/i)) return _geopbf(await kmz2pbf(q));
             else if (name.match(/\.xml$/i)) return _geopbf(await gmldec(q));
             else if (name.match(/\.gz(ip)?$/i)) return _geopbf(await gunzip(q));
             else logger.error("illegal File: ", q);
@@ -86,6 +85,14 @@ export async function geopbf(data, options = {}) {
                 worker.postMessage({ file, precision });
             });
         }
+        async function gmldec(file) {
+            const worker = new Worker(new URL('../worker/gmldec.js', import.meta.url), { type: 'module' });
+            const precision = options.precision || 6;
+            return new Promise(resolve => {
+                worker.onmessage = async e => resolve(e.data ? await new PBF().set(e.data) : null);
+                worker.postMessage({ file, precision });
+            });
+        }
         function toFeatureCollection(q) {
             const fc = a => ({type:"FeatureCollection", features:a});
             const f = g => ({type:"Feature", geometry:g, properties:{}});
@@ -97,3 +104,67 @@ export async function geopbf(data, options = {}) {
         }
     }
 }
+////===========================================================================================================
+//// I/O & Export
+////===========================================================================================================
+const setPrototype = func => {  const proto = PBF.prototype || {}, name = func.name;
+    (name in proto) || Object.defineProperty(proto, name, { value: func, configurable: false, enumerable: false});
+};
+[pbfFile, geojsonFile, topojsonFile, shape, pbf2kmz, pbf2gml].forEach(setPrototype);
+async function pbfFile(flag) {
+    return gz(flag, new File([this.arrayBuffer], (this._name)+".pbf", {type:"application/octet-stream"})); 
+}
+async function geojsonFile(flag) {
+    const a = this.fmap.map((t, i) => (i ? "," : "") + JSON.stringify(this.getFeature(i)));
+    a.unshift(`{"type":"FeatureCollection","name":"${this._name}","features":[`); 
+    a.push(']}');
+    return gz(flag, new File(a, this._name+".geojson", {type:"application/json"})); 
+}
+async function topojsonFile(flag) {
+    return gz(flag, new File([JSON.stringify(this.topojson)], this._name+".topojson", {type:"application/json"})); 
+}
+async function shape(options = {}) {
+    const worker = new Worker(new URL('../worker/shpenc.js', import.meta.url), { type: 'module' });
+    const arrayBuffer = this.arrayBuffer, name = this._name;
+    const encoding = (options.encoding||"utf8").toLowerCase().replace(/[\-\_]/g,"").replace(/shiftjis/,"sjis");
+    const level = options.level || 3;
+    return new Promise(resolve=>{
+        worker.onmessage = async e => resolve(e.data? await new PBF().set(e.data): null);
+        worker.postMessage({arrayBuffer, name, encoding, level});
+    });
+}
+async function pbf2kmz(pbf, name) {
+    const worker = new Worker(new URL('../worker/kmzenc.js', import.meta.url), { type: 'module' });
+    return new Promise(resolve => {
+        worker.onmessage = e => resolve(e.data);
+        worker.postMessage({ arraybuffer: pbf.arrayBuffer, name });
+    });
+}
+async function pbf2gml(pbf, name) {
+    const worker = new Worker(new URL('../worker/gmlenc.js', import.meta.url), { type: 'module' });
+    return new Promise(resolve => {
+        worker.onmessage = e => resolve(e.data);
+        worker.postMessage({ arraybuffer: pbf.arrayBuffer, name });
+    });
+}
+async function file(options = {}) {
+    const self = this, gzip = !!options.gzip;
+    return options.format == "shape" ? await self.shapeFile(options) :
+            options.format == "geojson" ? await self.geojsonFile(gzip) :
+            options.format == "topojson" ? await self.topojsonFile(gzip) : 
+            await self.pbfFile(gzip);
+}
+
+
+// setPrototype(PBF, "put", async function(tub) { return (tub || PBF.io || (PBF.io = await pbfio())).put(this); });
+// setPrototype(PBF, "get", async function(name, tub) {
+//     var buf = await (tub || PBF.io || (PBF.io = await pbfio())).get(name, true);
+//     await this.empty(); 
+//     return this.set(buf);
+// });
+// setPrototype(PBF, "save", async function(tub) { return (tub || PBF.io || (PBF.io = await pbfio())).save(this); });
+// setPrototype(PBF, "load", async function(name, tub) { 
+//     var buf = await (tub || PBF.io || (PBF.io = await pbfio())).load(name, true);
+//     await this.empty(); 
+//     return this.set(buf);
+// });

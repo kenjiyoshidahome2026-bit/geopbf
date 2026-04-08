@@ -1,4 +1,3 @@
-//import {nativeBucket} from 'native-bucket';
 import { PBF } from "./pbf-extension.js";
 class PBFIO {
     constructor(dire) { this.dire = dire||"GIS"; }

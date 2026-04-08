@@ -122,67 +122,7 @@ setPrototype(PBF, "concat", function() {
     return PBF.concatinate(pbfs, this.name());
 });
 
-////===========================================================================================================
-//// I/O & Export
-////===========================================================================================================
-setPrototype(PBF, "pbfFile", async function(flag) {
-    return gz(flag, new File([this.arrayBuffer], (this._name)+".pbf", {type:"application/octet-stream"})); 
-});
-setPrototype(PBF, "geojsonFile", async function(flag) {
-    const a = this.fmap.map((t, i) => (i ? "," : "") + JSON.stringify(this.getFeature(i)));
-    a.unshift(`{"type":"FeatureCollection","name":"${this._name}","features":[`); 
-    a.push(']}');
-    return gz(flag, new File(a, this._name+".geojson", {type:"application/json"})); 
-});
-setPrototype(PBF, "topojsonFile", async function(flag) {
-    return gz(flag, new File([JSON.stringify(this.topojson)], this._name+".topojson", {type:"application/json"})); 
-});
-setPrototype(PBF, "shapeFile", async function(options = {}) {
-    const worker = new Worker(new URL('../worker/shpenc.js', import.meta.url), { type: 'module' });
-    const arrayBuffer = this.arrayBuffer, name = this._name;
-    const encoding = (options.encoding||"utf8").toLowerCase().replace(/[\-\_]/g,"").replace(/shiftjis/,"sjis");
-    const level = options.level || 3;
-    return new Promise(resolve=>{
-        worker.onmessage = async e => resolve(e.data? await new PBF().set(e.data): null);
-        worker.postMessage({arrayBuffer, name, encoding, level});
-    });
-});
-export async function pbf2kmz(pbf, name) {
-    const worker = new Worker(new URL('../worker/kmzenc.js', import.meta.url), { type: 'module' });
-    return new Promise(resolve => {
-        worker.onmessage = e => resolve(e.data);
-        worker.postMessage({ arraybuffer: pbf.arrayBuffer, name });
-    });
-}
-setPrototype(PBF, "file", async function(options = {}) {
-    const self = this, gzip = !!options.gzip;
-    return options.format == "shape" ? await self.shapeFile(options) :
-            options.format == "geojson" ? await self.geojsonFile(gzip) :
-            options.format == "topojson" ? await self.topojsonFile(gzip) : 
-            await self.pbfFile(gzip);
-});
-setPrototype(PBF, "download", async function(options = {}) {
-    const file = await this.file(options);
-    const a = document.createElement('a'); 
-    a.download = file.name;
-    const url = a.href = URL.createObjectURL(file);
-    a.click(); 
-    a.remove();
-    URL.revokeObjectURL(url);
-});
 
-setPrototype(PBF, "put", async function(tub) { return (tub || PBF.io || (PBF.io = await pbfio())).put(this); });
-setPrototype(PBF, "get", async function(name, tub) {
-    var buf = await (tub || PBF.io || (PBF.io = await pbfio())).get(name, true);
-    await this.empty(); 
-    return this.set(buf);
-});
-setPrototype(PBF, "save", async function(tub) { return (tub || PBF.io || (PBF.io = await pbfio())).save(this); });
-setPrototype(PBF, "load", async function(name, tub) { 
-    var buf = await (tub || PBF.io || (PBF.io = await pbfio())).load(name, true);
-    await this.empty(); 
-    return this.set(buf);
-});
 export { PBF };
 ////===========================================================================================================
 //// Private Implementations
