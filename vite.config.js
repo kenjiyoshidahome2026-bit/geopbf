@@ -10,30 +10,25 @@ const banner = `/*!
 export default defineConfig({
 		resolve: {
 			alias: {
-				// "native-bucket" というインポートを、ローカルのソースファイルに直接紐付ける
 				'native-bucket': resolve(__dirname, '../native-bucket/src/index.js'), 
-				// ↑ もしエントリポイントが index.js でない場合は、正しいファイルパスに変えてください
 			}
 		},
 	    worker: {
 			format: 'es', 
 		},
 		optimizeDeps: {
-        	include: ['native-bucket'] // 開発時に強制的にバンドルに含める
+        	exclude: ['native-bucket']
     	},
 	    build: {
-        target: 'esnext', // 修正: arget -> target
+        target: 'esnext',
         sourcemap: true,
         rollupOptions: {
             output: {
-                // Vite 8 では inlineDynamicImports: false の代わりに 
-                // codeSplitting: true を使用して分割を明示します
                 codeSplitting: true, 
                 chunkFileNames: 'chunks/[name]-[hash].js',
                 assetFileNames: 'assets/[name]-[hash][extname]',
             },
-            // Node.jsのポリフィルを混入させないための設定
-            external: [ 'encoding-japanese']
+           external: [ 'encoding-japanese']
         },
         minify: 'terser',
         terserOptions: {

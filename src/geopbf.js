@@ -5,11 +5,11 @@ import {Logger} from "./logger.js";
 import {topo2geo} from "./topo2geo.js";
 import {gzip, gunzip, isGzip} from "../../native-bucket/src/gzip.js";
 const logger = new Logger();
-let server = null;
-(async () => {server = await pbfio("GIS").catch(e => { logger.warn("PBFIO initialization failed. Caching will be disabled.", e); return null; });})();
+const server = await pbfio("GIS").catch(e => { logger.warn("PBFIO initialization failed. Caching will be disabled.", e); return null; });
+console.log(server)
 //const server = await pbfio("GIS").catch(e => { logger.warn("PBFIO initialization failed. Caching will be disabled.", e); return null; });
 ////===========================================================================================================
-export async function geopbf(data, options = {}) {
+export async function geopbf(data, options = {}) {debugger
     const isString = _ => (typeof _ == "string");
     const isObject = _ => (Object.prototype.toString.call(_) === '[object Object]'||Array.isArray(_));
     const isBuffer = _ => (_ instanceof ArrayBuffer||ArrayBuffer.isView(_));

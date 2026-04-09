@@ -64,13 +64,12 @@ dz.ondrop = e => {
 document.querySelectorAll('.presets button').forEach(btn => {
     btn.onclick = async () => {
      //   const url = btn.dataset.url; // "https://...zip#N03-20250101.geojson"
-        const [url,name] = btn.dataset.url.split('#');
+     //   const [url,name] = btn.dataset.url.split('#');
         log(`Fetching via native-bucket...`, 'var(--accent)');
         
         try {
-            // これこそが native-bucket の真骨頂！
-            // URLにハッシュが含まれていれば、Fetch が自動でZIP内のエントリを File として解決する
-            const file = await Fetch(url, {target:name});
+debugger
+            const file = await geopbf(btn.dataset.url);
 
             if (file) {
                 log(`Success: <b>${file.name}</b> resolved.`, 'var(--success)');

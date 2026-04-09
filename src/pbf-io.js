@@ -1,14 +1,18 @@
 import { PBF } from "./pbf-extension.js";
 class PBFIO {
     constructor(dire) { this.dire = dire||"GIS"; }
-    async open() { 
-        const {nativeBucket} = await import('native-bucket');
-        const {Bucket, Cache, Fetch} = await nativeBucket();
-        this.bucket = await Bucket(`${this.dire}/pbf`);
+    async open() {
+        const { default: nativeBucket } = await import("native-bucket")
+        .catch(e => { console.error("Failed to load native-bucket module. Caching will be disabled.", e); return {}; });
+        const {Bucket, Cache, Fetch} = nativeBucket(); 
+        console.log(Bucket, Cache, Fetch);
+       this.bucket = await Bucket(`${this.dire}/pbf`);
         this.cache = await Cache(`${this.dire}/pbf`);
-        this.fetch = Fetch;
+        this.nativeFetch = Fetch;
         this.fetchCache = await Cache(`${this.dire}/loaded`);
+         console.log(Bucket, Cache, Fetch);
         if (!this.bucket || !this.cache) { console.error("PBFIO open error: unable to access bucket or cache."); return null; }
+        console.log(this)
         return this;
     }
     async files() { return await this.bucket.list(); }
@@ -23,13 +27,13 @@ class PBFIO {
         for (const name of localKeys) {
             const ETag = await this.bucket.etag(name);
             if (ETag === false) break
-            (ETag === null)? await this.delete(name) : await _sync(name, ETag);
+            (ETag === null)? await this.delete(name) : await this._sync(name, ETag);
         }
     }
     async fetch(name, useCache = true) {
         if (useCache) { const v = await this.fetchCache(name); if (v) return v; }
         const [url, target] = name.split(/\#/);
-        const file = target? await this.fetch(url, {target}): await Fetch(url);
+        const file = target? await this.nativeFetch(url, {target}): await this.nativeFetch(url);
         await this.fetchCache(name, file);
         return file;
     }
@@ -43,7 +47,7 @@ class PBFIO {
             if (val) await this.cache(name, null);
             return null;
         }
-        return new PBF().set(await _sync(name, ETag));
+        return new PBF().set(await this._sync(name, ETag));
     }
     async save(pbf) {
         const name = pbf.name(); if (!name) { console.error("can't save pbf widthout name."); return null; }
