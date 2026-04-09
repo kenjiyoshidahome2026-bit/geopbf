@@ -1,4 +1,5 @@
 export function antimeridianCut(points, isLine = false) {
+    const { sin, cos, sqrt, atan2, abs } = Math;
     const tub = [];
     const is_ring = _ => (_[0][0] == _[_.length - 1][0]) && (_[0][1] == _[_.length - 1][1]);
     const is_clockwise = _ => {

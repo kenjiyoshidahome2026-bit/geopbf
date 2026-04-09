@@ -3,81 +3,77 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>geopbf.js | Ultra-fast GIS Binary Hub</title>
+    <title>geopbf Full Function Test</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 20px;
+            line-height: 1.6;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .test-card {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 8px;
+            background: #f9f9f9;
+        }
+
+        .status {
+            font-weight: bold;
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        .pending {
+            background: #eee;
+        }
+
+        .running {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        pre {
+            background: #222;
+            color: #adff2f;
+            padding: 10px;
+            font-size: 11px;
+            overflow-x: auto;
+            max-height: 150px;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 1rem;
+            cursor: pointer;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+    </style>
 </head>
 
 <body>
-    <div id="app">
-        <header>
-            <h1>📦 geopbf.js</h1>
-            <p>Every GIS format converges into a lightweight binary.</p>
-        </header>
+    <h1>geopbf 全機能テストデモ</h1>
+    <p>5つの異なるGISソースをPBF化し、サーバー保存と変換をテストします。</p>
 
-        <main>
-            <section id="drop-zone">
-                <div class="dz-content">
-                    <span class="icon">📥</span>
-                    <p>Drop SHP/ZIP, KMZ, GML, or Huge GeoJSON here</p>
-                    <div class="presets">
-                        <span>Or try presets:</span>
-                        <button
-                            data-url="https://nlftp.mlit.go.jp/ksj/gml/data/N03/N03-2025/N03-20250101_GML.zip#N03-20250101.geojson">
-                            🇯🇵 行政区域 (2025)
-                        </button>
-                    </div>
-                </div>
-            </section>
+    <button id="run-btn">テスト開始</button>
+    <div id="test-list" style="margin-top:20px;"></div>
 
-            <section id="result-container" style="display: none;">
-                <div class="card">
-                    <div class="card-header">
-                        <span class="badge">LIVE PBF INSTANCE</span>
-                        <h2 id="pbf-filename">-</h2>
-                    </div>
-
-                    <div class="stats-grid">
-                        <div class="stat-item">
-                            <label>Features</label>
-                            <span id="stat-count">-</span>
-                        </div>
-                        <div class="stat-item">
-                            <label>Binary Size</label>
-                            <span id="stat-size">-</span>
-                        </div>
-                        <div class="stat-item">
-                            <label>Parse Time</label>
-                            <span id="stat-time">-</span>
-                        </div>
-                    </div>
-
-                    <div class="metadata-form">
-                        <div class="input-group">
-                            <label>NAME</label>
-                            <input type="text" id="meta-name" spellcheck="false">
-                        </div>
-                        <div class="input-group">
-                            <label>LICENSE</label>
-                            <input type="text" id="meta-license" spellcheck="false">
-                        </div>
-                        <div class="input-group">
-                            <label>DESCRIPTION</label>
-                            <input type="text" id="meta-desc" spellcheck="false">
-                        </div>
-                        <div class="actions">
-                            <button id="btn-update" class="primary">Apply Header Sync</button>
-                            <button id="btn-download" class="secondary">Download .pbf</button>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <section id="terminal">
-                <div class="term-header">Terminal Log</div>
-                <div id="log-content"></div>
-            </section>
-        </main>
-    </div>
     <script type="module" src="./demo.js"></script>
 </body>
 
