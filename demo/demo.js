@@ -66,11 +66,9 @@ document.querySelectorAll('.presets button').forEach(btn => {
      //   const url = btn.dataset.url; // "https://...zip#N03-20250101.geojson"
      //   const [url,name] = btn.dataset.url.split('#');
         log(`Fetching via native-bucket...`, 'var(--accent)');
-        
         try {
-debugger
             const file = await geopbf(btn.dataset.url);
-
+console.log(file)
             if (file) {
                 log(`Success: <b>${file.name}</b> resolved.`, 'var(--success)');
                 // そのまま geopbf のロジックへ流し込む
