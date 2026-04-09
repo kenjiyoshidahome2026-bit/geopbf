@@ -126,6 +126,6 @@ async function geojsonFile(flag) {
 async function topojsonFile(flag) {
     return gz(flag, new File([JSON.stringify(this.topojson)], this._name+".topojson", {type:"application/json"})); 
 }
-async function shape(flag) { return gz(flag, await encoder("shp", this));}
+async function shape() { return encoder("shp", this);}
 async function kmz(flag) { return gz(flag, await encoder("kmz", this));}
 async function gml(flag) { return gz(flag, await encoder("gml", this));}
