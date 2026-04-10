@@ -3,7 +3,7 @@ import { geopbf } from '../src/geopbf.js';
 
 const TEST_CASES = [
     { type: "GeoJSON", name: "World Countries", url: "https://raw.githubusercontent.com/datasets/geo-boundaries-world-110m/master/countries.geojson" },
-    { type: "TopoJSON", name: "World Atlas", url: "https://raw.githubusercontent.com/topojson/world-atlas/master/world/110m.json" },
+    { type: "TopoJSON", name: "World Atlas", url: "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json" },
     { type: "Shapefile ZIP", name: "Natural Earth Land", url: "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/zips/ne_110m_land.zip" },
     { type: "KMZ", name: "KML Samples", url: "https://developers.google.com/kml/documentation/KML_Samples.kmz" },
     { type: "GML", name: "OSM Sample", url: "https://raw.githubusercontent.com/openlayers/ol3/master/test/spec/ol/format/gml/osm.gml" }

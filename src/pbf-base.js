@@ -146,7 +146,7 @@ class PBF {
     getGeometry(i,j) { return readGeometry(this, i, j); }		
     getProperties(i) { return readProperties(this, i); }
     getType(i) { return i === undefined? this.each(i=>this.getType(i)): geometryTypes[this.fmap[i][2]]; }
-    getBbox(i) { debugger; if (i === undefined) return this.each(i=>this.getBbox(i));
+    getBbox(i) { if (i === undefined) return this.each(i=>this.getBbox(i));
         let xmin = Infinity, ymin = Infinity, xmax = -Infinity, ymax = -Infinity;
         const calcBbox = c => { if (!c || !Array.isArray(c)) return;
             if (typeof c[0] === 'number') {
