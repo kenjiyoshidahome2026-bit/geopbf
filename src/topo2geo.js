@@ -1,3 +1,4 @@
+import { PBF } from "./pbf-base.js";
 export function topo2geo(topo) {
     const { arcs, transform, objects } = topo;
     const { scale = [1, 1], translate = [0, 0] } = transform || {};
