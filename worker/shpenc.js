@@ -37,7 +37,7 @@ class WBUF {
 }
 ////=======================================================================================================================
 function writeShp(pbf, name, farray, type) {
-    var bbox = null;
+    var bbox = pbf.bbox;
     var shxBytes = 100 + farray.length * 8;
     var SHX = new WBUF(shxBytes).position(100); // jump to record section
     var fileBytes = 100;
@@ -50,7 +50,7 @@ function writeShp(pbf, name, farray, type) {
         var recBytes = rec.byteLength;
         SHX.writeInt32(fileBytes / 2).writeInt32(recBytes / 2 - 4);
         fileBytes += recBytes;
-        type == 1 || bb && (bbox = mergebbox(bbox, bb));
+    //    type == 1 || bb && (bbox = mergebbox(bbox, bb));
         return rec;
     });
     var SHP = new WBUF(fileBytes)
@@ -90,19 +90,19 @@ function writeShp(pbf, name, farray, type) {
         .writeFloat64(bbox[0], true).writeFloat64(bbox[1], true).writeFloat64(bbox[2], true).writeFloat64(bbox[3], true)
         .writeInt32(pathCount, true).writeInt32(coordsCount, true);
             pos.forEach(t=>bin.writeInt32(t, true));
-            coords.forEach(t=>t.forEach(u=>bin.writeFloat64(u[0], true).writeFloat64(u[1], true)));
+            coords.forEach(t=>t.forEach(u=>u&&bin.writeFloat64(u[0], true).writeFloat64(u[1], true)));
             return bin;
     }
-    function mergebbox(bbox, [a,b,c,d]) {
-        if (bbox === null) bbox = [a,b,c,d];
-        else {
-            if (bbox[0] > a) bbox[0] = a;
-            if (bbox[1] > b) bbox[1] = b;
-            if (bbox[2] < c) bbox[2] = c;
-            if (bbox[3] < d) bbox[3] = d;
-        }
-        return bbox;
-    }
+    // function mergebbox(bbox, [a,b,c,d]) {
+    //     if (bbox === null) bbox = [a,b,c,d];
+    //     else {
+    //         if (bbox[0] > a) bbox[0] = a;
+    //         if (bbox[1] > b) bbox[1] = b;
+    //         if (bbox[2] < c) bbox[2] = c;
+    //         if (bbox[3] < d) bbox[3] = d;
+    //     }
+    //     return bbox;
+    // }
 }
 ////--------------------------------------------------------------------------------------------------------------------------	
 function writeDbf(pbf, name, farray, encoding, encoder) {
@@ -197,7 +197,7 @@ function writeDbf(pbf, name, farray, encoding, encoder) {
             case 'L': DBF.writeUint8(!!value ? 84 : 70); break;
             case 'N': //DBF.writeBuffer(encoder(fill(value.toFixed(precision), length))); break;
                 const numStr = value.toFixed(precision).padStart(length, " ");
-                DBF.writeBuffer(encoder(numStr));
+                DBF.writeBuffer(encoder(numStr)); break;
             case 'D': DBF.writeBuffer(encoder(yyyymmdd(value)), length); break;
             case 'C': 
                 if (value instanceof ImageData||value instanceof Blob) {

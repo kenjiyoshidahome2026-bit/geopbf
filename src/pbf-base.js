@@ -45,56 +45,71 @@ class PBF {
             return self.setHead(keys, buffs).setBody(obj).close();
         }
     }
-    async getPosition() { const self = this;
-        const {pbf, keys, e, fmap, props} = self.init();
-        const bufs = new readBufs();
-        let farrayPos; // FARRAYフィールド（タグ+長さ）の開始位置
+// src/pbf-base.js (getPosition メソッド)
+    async getPosition() { 
+        const self = this;
+        self.init(); // 内部変数の初期化
+        const pbf = self.pbf; // 明示的に取得
+        const keys = self.keys;
+        const e = self.e;
+        const fmap = self.fmap;
+        const props = self.props;
+
+        const bufsReader = new readBufs();
+        let pos = 0; // デフォルト値を 0 に
+
         pbf.readFields(tag => {
             if (tag === TAGS.NAME) self.name(pbf.readString());
             else if (tag === TAGS.DESCRIPTION) self.description(pbf.readString());
-            else if (tag === TAGS.LICENSE) self.license(pbf.readString());
+            else if (tag === TAGS.LISENCE) self.lisence(pbf.readString());
             else if (tag === TAGS.KEYS) keys.push(pbf.readString());
-            else if (tag === TAGS.BUFS) bufs.set(pbf.readBytes());
+            else if (tag === TAGS.BUFS) bufsReader.set(pbf.readBytes());
             else if (tag === TAGS.PRECISION) self.e = Math.pow(10, self._precision = pbf.readVarint());
-            else if (tag === TAGS.FARRAY) farrayPos = pbf.pos;
+            else if (tag === TAGS.FARRAY) pos = pbf.pos;
         });
-        self.bufs = await bufs.close();
+
+        self.bufs = await bufsReader.close();
         self.end = pbf.pos;
-        pbf.pos = farrayPos;
-        pbf.readMessage((tag, p, end) => {
-            self.bodyPos = p.pos; // 地物データの絶対的な開始位置を記録
-            featureCollection(tag);
-        });
-    //    pbf.readMessage(featureCollection);
-        return self;
-        function featureCollection(tag) { if (tag !== TAGS.FEATURE) return;
-            var fpos, gpos, type, garray, tarray;
-            const values = [], q = new Array(keys.length);
-            garray = [], tarray = [];
-            fpos = pbf.pos, pbf.readMessage(feature);
-            fmap.push(type==6?[fpos,gpos,type,garray,tarray]:[fpos,gpos,type]);
-            props.push(q);
-            function feature(tag) { 
-                if (tag === TAGS.GEOMETRY) (gpos = pbf.pos, pbf.readMessage(geometry));
-                else if (tag === TAGS.VALUE) (pbf.readVarint(), values.push(readValue(self)));
-                else if (tag === TAGS.INDEX) propline();
-                function geometry(tag) { 
-                    if (tag === TAGS.GTYPE)  type = pbf.readVarint(); 
-                    else if (tag === TAGS.GARRAY) {
-                        pbf.readMessage(tag => {
-                            if (tag === TAGS.GEOMETRY) { garray.push(pbf.pos);
-                                pbf.readMessage(tag=>{
-                                    (tag === TAGS.GTYPE) && tarray.push(pbf.readVarint()); 
+        
+        // pos が有効な場合のみ読み込みを続行
+        if (pos > 0) {
+            pbf.pos = pos; 
+            pbf.readMessage(tag => {
+                if (tag !== TAGS.FEATURE) return;
+                var fpos, gpos, type, garray = [], tarray = [];
+                const values = [], q = new Array(keys.length);
+                fpos = pbf.pos;
+                pbf.readMessage(ftag => {
+                    if (ftag === TAGS.GEOMETRY) {
+                        gpos = pbf.pos;
+                        pbf.readMessage(gtag => {
+                            if (gtag === TAGS.GTYPE) type = pbf.readVarint(); 
+                            else if (gtag === TAGS.GARRAY) {
+                                pbf.readMessage(gatag => {
+                                    if (gatag === TAGS.GEOMETRY) {
+                                        garray.push(pbf.pos);
+                                        pbf.readMessage(gaatag => {
+                                            if (gaatag === TAGS.GTYPE) tarray.push(pbf.readVarint()); 
+                                        });
+                                    }
                                 });
-                            };
+                            }
                         });
                     }
-                }
-                function propline() { var end = pbf.readVarint() + pbf.pos, pos = 0;
-                    while (pbf.pos < end) q[pbf.readVarint()] = values[pos++];
-                }
-            }
+                    else if (ftag === TAGS.VALUE) {
+                        pbf.readVarint();
+                        values.push(readValue(self));
+                    }
+                    else if (ftag === TAGS.INDEX) {
+                        var end = pbf.readVarint() + pbf.pos, vpos = 0;
+                        while (pbf.pos < end) q[pbf.readVarint()] = values[vpos++];
+                    }
+                });
+                fmap.push(type == 6 ? [fpos, gpos, type, garray, tarray] : [fpos, gpos, type]);
+                props.push(q);
+            });
         }
+        return self;
     }
     get size() { return this.end; }
     get length() { return (this.fmap||[]).length; }
@@ -131,15 +146,15 @@ class PBF {
     getGeometry(i,j) { return readGeometry(this, i, j); }		
     getProperties(i) { return readProperties(this, i); }
     getType(i) { return i === undefined? this.each(i=>this.getType(i)): geometryTypes[this.fmap[i][2]]; }
-    getBbox(i) { if (i === undefined) return this.each(i=>this.getBbox(i));
+    getBbox(i) { debugger; if (i === undefined) return this.each(i=>this.getBbox(i));
         let xmin = Infinity, ymin = Infinity, xmax = -Infinity, ymax = -Infinity;
-        const calcBbox = c => {
+        const calcBbox = c => { if (!c || !Array.isArray(c)) return;
             if (typeof c[0] === 'number') {
                 if (c[0] < xmin) xmin = c[0]; if (c[0] > xmax) xmax = c[0];
                 if (c[1] < ymin) ymin = c[1]; if (c[1] > ymax) ymax = c[1];
             } else c.forEach(calcBbox);
         };
-        const geom = this.getGeometry(i);
+        const geom = this.getGeometry(i); console.log(geom);
         (geom.type=="GeometryCollection")? geom.geometries.forEach(t=>calcBbox(t.coordinates)): calcBbox(geom.coordinates);
         return [xmin, ymin, xmax, ymax].map(v => Math.round(v * this.e) / this.e);
     }

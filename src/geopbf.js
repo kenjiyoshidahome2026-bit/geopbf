@@ -120,11 +120,11 @@ export async function geopbf(data, options = {}) {
 // --- Prototype Extensions ---
 async function save() {
     const server = await getServer();
-    if (!server) return;
     const name = await server.save(this);
-    return name ? await server.load(name) : null;
+    console.log(name);
+    return this
+  //   return await io.load(name);
 }
-
 async function encoder(type, pbf) {
     const workerUrl = new URL(`../worker/${type}enc.js`, import.meta.url);
     const w = new Worker(workerUrl, { type: 'module' });
@@ -133,16 +133,16 @@ async function encoder(type, pbf) {
         w.postMessage({ arraybuffer: pbf.arrayBuffer, name: pbf._name });
     });
 }
-
-async function pbfFile(flag) { return gzip(flag, new File([this.arrayBuffer], this._name + ".pbf", { type: "application/x-geopbf" })); }
+const gz = (flag,file) => flag? gzip(file):file;
+async function pbfFile(flag) { return gz(flag, new File([this.arrayBuffer], this._name + ".pbf", { type: "application/x-geopbf" })); }
 async function geojsonFile(flag) {
     const a = [`{"type":"FeatureCollection","name":"${this._name}","features":[`, ...this.fmap.map((_, i) => (i ? "," : "") + JSON.stringify(this.getFeature(i))), ']}'];
     return gzip(flag, new File(a, this._name + ".geojson", { type: "application/json" }));
 }
-async function topojsonFile(flag) { return gzip(flag, new File([JSON.stringify(this.topojson)], this._name + ".topojson", { type: "application/json" })); }
+async function topojsonFile(flag) { return gz(flag, new File([JSON.stringify(this.topojson)], this._name + ".topojson", { type: "application/json" })); }
 async function shape() { return encoder("shp", this); }
-async function kmz(flag) { return gzip(flag, await encoder("kmz", this)); }
-async function gml(flag) { return gzip(flag, await encoder("gml", this)); }
+async function kmz(flag) { return gz(flag, await encoder("kmz", this)); }
+async function gml(flag) { return gz(flag, await encoder("gml", this)); }
 
 [save, pbfFile, geojsonFile, topojsonFile, shape, kmz, gml].forEach(func => {
     Object.defineProperty(PBF.prototype, func.name, { value: func, configurable: false, enumerable: false });

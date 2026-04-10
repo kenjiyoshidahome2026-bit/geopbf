@@ -8,7 +8,18 @@ const banner = `/*!
 */`;
 
 export default defineConfig({
-		resolve: {
+server: {
+    proxy: {
+      // '/api' で始まるリクエストを https://api.ortho-earth.com に転送
+      '/api': {
+        target: 'https://api.ortho-earth.com',
+        changeOrigin: true, // これを true にすることで、Originヘッダーをターゲットに合わせます
+        rewrite: (path) => path.replace(/^\/api/, ''), // 先頭の '/api' を削除して転送
+        // SSL証明書関連でエラーが出る場合は以下を追加
+        // secure: false,
+      }
+    }
+  },		resolve: {
 			alias: {
 				'native-bucket': resolve(__dirname, '../native-bucket/src/index.js'), 
 			}

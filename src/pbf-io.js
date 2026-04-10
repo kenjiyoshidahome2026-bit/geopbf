@@ -3,16 +3,13 @@ class PBFIO {
     constructor(dire) { this.dire = dire||"GIS"; }
     async open() {
         const { default: nativeBucket } = await import("native-bucket")
-        .catch(e => { console.error("Failed to load native-bucket module. Caching will be disabled.", e); return {}; });
-        const {Bucket, Cache, Fetch} = nativeBucket(); 
-        console.log(Bucket, Cache, Fetch);
-       this.bucket = await Bucket(`${this.dire}/pbf`);
+            .catch(e => { console.error("native-bucket load error", e); return {}; });
+        
+        const { Bucket, Cache, Fetch } = nativeBucket(); // 最新形式
+        this.bucket = await Bucket(`${this.dire}/pbf`);
         this.cache = await Cache(`${this.dire}/pbf`);
-        this.nativeFetch = Fetch;
+        this.nativeFetch = Fetch; // インスタンスに保存
         this.fetchCache = await Cache(`${this.dire}/loaded`);
-         console.log(Bucket, Cache, Fetch);
-        if (!this.bucket || !this.cache) { console.error("PBFIO open error: unable to access bucket or cache."); return null; }
-        console.log(this)
         return this;
     }
     async files() { return await this.bucket.list(); }
@@ -31,10 +28,10 @@ class PBFIO {
         }
     }
     async fetch(name, useCache = true) {
-        if (useCache) { const v = await this.fetchCache(name); if (v) return v; }
+        if (useCache && this.fetchCache) { const v = await this.fetchCache(name); if (v) return v; }
         const [url, target] = name.split(/\#/);
-        const file = target? await this.nativeFetch(url, {target}): await this.nativeFetch(url);
-        await this.fetchCache(name, file);
+        const file = target ? await this.fetch(url, {target}) : await this.nativeFetch(url);
+        if (this.fetchCache) await this.fetchCache(name, file);
         return file;
     }
     async load(name) {
@@ -50,9 +47,19 @@ class PBFIO {
         return new PBF().set(await this._sync(name, ETag));
     }
     async save(pbf) {
-        const name = pbf.name(); if (!name) { console.error("can't save pbf widthout name."); return null; }
-        await this.bucket.put(name, await pbf.pbfFile());
-        await this.cache(name, {ETag: await this.bucket.etag(name), Buff: await pbf.pbfBuffer()});
+        const name = pbf.name(); if (!name) return null;
+    //    console.log("PBFIO.save check:", { name, pbf }); // ★ここをチェック
+        const file = new File([pbf.arrayBuffer], pbf._name + ".pbf", { type: "application/x-geopbf" });
+    //    const file = await pbf.pbfFile();
+        console.log("pbffile", file)
+        if (!file) return null;
+        await this.bucket.put(file);
+        const ETag = await this.bucket.etag(name);
+        console.log(ETag);
+        await this.cache(name, { 
+            ETag, 
+            Buff: pbf.arrayBuffer 
+        });
         return name;
     }
     async delete(name) {

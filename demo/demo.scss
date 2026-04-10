@@ -1,206 +1,98 @@
-:root {
-    --bg: #0d1117;
-    --card-bg: #161b22;
-    --accent: #58a6ff;
-    --success: #3fb950;
-    --text: #c9d1d9;
-    --border: #30363d;
+// 変数とミックスイン
+$primary: #007bff;
+$success: #28a745;
+$danger: #dc3545;
+$warning: #ffc107;
+$dark: #212529;
+$gray-light: #f8f9fa;
+
+@mixin badge-style($bg, $color: white) {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: bold;
+  background-color: $bg;
+  color: $color;
 }
 
 body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: 'Inter', system-ui, sans-serif;
+  background-color: #f0f2f5;
+  padding: 40px 20px;
 }
 
-#app {
-    max-width: 900px;
-    margin: 0 auto;
-    padding: 40px 20px;
-}
+.test-container {
+  max-width: 960px;
+  margin: 0 auto;
+  background: white;
+  padding: 2rem;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.05);
 
-header {
-    text-align: center;
-    margin-bottom: 40px;
+  header {
+    margin-bottom: 2rem;
+    border-bottom: 2px solid $gray-light;
+    padding-bottom: 1rem;
+    h1 { color: $dark; margin: 0; font-size: 1.75rem; }
+    p { color: #6c757d; margin-top: 0.5rem; }
+  }
 
-    h1 {
-        font-size: 2.5rem;
-        margin: 0;
-        color: var(--accent);
-    }
-
-    p {
-        color: #8b949e;
-        margin-top: 8px;
-    }
-}
-
-#drop-zone {
-    border: 2px dashed var(--border);
-    border-radius: 12px;
-    padding: 60px 20px;
-    text-align: center;
-    transition: 0.2s;
-    background: var(--card-bg);
-
-    &.hover {
-        border-color: var(--accent);
-        background: #1f2937;
-    }
-
-    .icon {
-        font-size: 3rem;
-        display: block;
-        margin-bottom: 15px;
-    }
-
-    .presets {
-        margin-top: 20px;
-        font-size: 0.9rem;
-
-        button {
-            background: #21262d;
-            border: 1px solid var(--border);
-            color: var(--text);
-            padding: 6px 12px;
-            border-radius: 6px;
-            margin: 0 5px;
-            cursor: pointer;
-            transition: 0.2s;
-
-            &:hover {
-                background: #30363d;
-            }
-        }
-    }
-}
-
-.card {
-    background: var(--card-bg);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    margin-top: 24px;
-    padding: 24px;
-
-    .badge {
-        font-size: 0.7rem;
-        background: #238636;
-        color: white;
-        padding: 2px 8px;
-        border-radius: 10px;
-    }
-
-    h2 {
-        margin: 8px 0 24px;
-        font-size: 1.2rem;
-    }
-}
-
-.stats-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
-    margin-bottom: 32px;
-
-    .stat-item {
-        background: #0d1117;
-        padding: 16px;
-        border-radius: 8px;
-        border: 1px solid var(--border);
-
-        label {
-            display: block;
-            font-size: 0.75rem;
-            color: #8b949e;
-            margin-bottom: 4px;
-        }
-
-        span {
-            font-size: 1.2rem;
-            font-weight: 600;
-            color: var(--accent);
-        }
-    }
-}
-
-.metadata-form {
-    .input-group {
-        margin-bottom: 16px;
-
-        label {
-            display: block;
-            font-size: 0.75rem;
-            color: #8b949e;
-            margin-bottom: 6px;
-        }
-
-        input {
-            width: 100%;
-            box-sizing: border-box;
-            background: #0d1117;
-            border: 1px solid var(--border);
-            color: white;
-            padding: 10px;
-            border-radius: 6px;
-            outline: none;
-
-            &:focus {
-                border-color: var(--accent);
-            }
-        }
-    }
-}
-
-.actions {
-    display: flex;
-    gap: 12px;
-    margin-top: 24px;
-
+  .controls {
+    margin-bottom: 2rem;
     button {
-        flex: 1;
-        padding: 12px;
-        border-radius: 6px;
-        border: none;
-        font-weight: 600;
-        cursor: pointer;
-
-        &.primary {
-            background: var(--accent);
-            color: white;
-        }
-
-        &.secondary {
-            background: #30363d;
-            color: white;
-        }
-
-        &:hover {
-            filter: brightness(1.1);
-        }
+      background: $primary;
+      color: white;
+      border: none;
+      padding: 0.75rem 1.5rem;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+      &:hover { background: darken($primary, 10%); }
+      &:disabled { background: #ccc; cursor: wait; }
     }
+  }
 }
 
-#terminal {
-    margin-top: 40px;
-    background: #000;
+.test-list {
+  display: grid;
+  gap: 1rem;
+
+  .test-card {
+    border: 1px solid #dee2e6;
     border-radius: 8px;
-    overflow: hidden;
-    border: 1px solid var(--border);
+    padding: 1.25rem;
+    background: white;
 
-    .term-header {
-        background: #161b22;
-        padding: 8px 16px;
-        font-size: 0.8rem;
-        color: #8b949e;
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+      
+      .info {
+        h3 { margin: 0; font-size: 1.1rem; }
+        small { color: #6c757d; display: block; font-family: monospace; }
+      }
     }
 
-    #log-content {
-        padding: 16px;
-        font-family: "SFMono-Regular", Consolas, monospace;
-        font-size: 0.85rem;
-        height: 180px;
-        overflow-y: auto;
-        line-height: 1.5;
+    .status-badge {
+      &.pending { @include badge-style(#e9ecef, #495057); }
+      &.running { @include badge-style($warning, #856404); }
+      &.success { @include badge-style($success); }
+      &.error   { @include badge-style($danger); }
     }
+
+    .log-window {
+      background: $dark;
+      color: #a5d6a7;
+      padding: 1rem;
+      border-radius: 4px;
+      font-family: 'Fira Code', 'Courier New', monospace;
+      font-size: 12px;
+      height: 160px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      border: 1px solid #333;
+    }
+  }
 }

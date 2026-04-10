@@ -1,80 +1,24 @@
 <!DOCTYPE html>
 <html lang="ja">
-
 <head>
     <meta charset="UTF-8">
-    <title>geopbf Full Function Test</title>
-    <style>
-        body {
-            font-family: sans-serif;
-            padding: 20px;
-            line-height: 1.6;
-            max-width: 900px;
-            margin: 0 auto;
-        }
-
-        .test-card {
-            border: 1px solid #ddd;
-            padding: 15px;
-            margin-bottom: 15px;
-            border-radius: 8px;
-            background: #f9f9f9;
-        }
-
-        .status {
-            font-weight: bold;
-            padding: 2px 8px;
-            border-radius: 4px;
-        }
-
-        .pending {
-            background: #eee;
-        }
-
-        .running {
-            background: #fff3cd;
-            color: #856404;
-        }
-
-        .success {
-            background: #d4edda;
-            color: #155724;
-        }
-
-        .error {
-            background: #f8d7da;
-            color: #721c24;
-        }
-
-        pre {
-            background: #222;
-            color: #adff2f;
-            padding: 10px;
-            font-size: 11px;
-            overflow-x: auto;
-            max-height: 150px;
-        }
-
-        button {
-            padding: 10px 20px;
-            font-size: 1rem;
-            cursor: pointer;
-            background: #007bff;
-            color: white;
-            border: none;
-            border-radius: 5px;
-        }
-    </style>
+    <title>geopbf Full Stack Test</title>
+    <link rel="stylesheet" href="./demo.scss">
 </head>
-
 <body>
-    <h1>geopbf 全機能テストデモ</h1>
-    <p>5つの異なるGISソースをPBF化し、サーバー保存と変換をテストします。</p>
+    <div class="test-container">
+        <header>
+            <h1>geopbf / native-bucket 統合テスト</h1>
+            <p>Fetch → PBF化 → サーバー保存 → 相互変換のフルパイプライン検証</p>
+        </header>
 
-    <button id="run-btn">テスト開始</button>
-    <div id="test-list" style="margin-top:20px;"></div>
+        <div class="controls">
+            <button id="run-all">全てのテストを実行</button>
+        </div>
 
+        <div id="test-list" class="test-list">
+            </div>
+    </div>
     <script type="module" src="./demo.js"></script>
 </body>
-
 </html>
