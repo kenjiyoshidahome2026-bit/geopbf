@@ -154,7 +154,7 @@ class PBF {
                 if (c[1] < ymin) ymin = c[1]; if (c[1] > ymax) ymax = c[1];
             } else c.forEach(calcBbox);
         };
-        const geom = this.getGeometry(i); console.log(geom);
+        const geom = this.getGeometry(i);
         (geom.type=="GeometryCollection")? geom.geometries.forEach(t=>calcBbox(t.coordinates)): calcBbox(geom.coordinates);
         return [xmin, ymin, xmax, ymax].map(v => Math.round(v * this.e) / this.e);
     }
