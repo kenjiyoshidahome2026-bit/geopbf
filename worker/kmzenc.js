@@ -1,60 +1,84 @@
-import {PBF} from "../src/pbf-extension.js";
-import {encodeZIP} from "../../native-bucket/src/encodeZIP.js";
+import { PBF } from "../src/pbf-base.js";
+import { encodeZIP } from "../../native-bucket/src/encodeZIP.js";
+
+// Webカラー(#RRGGBB) または [r,g,b,a] を KML形式(aabbggrr)に変換
+const toKMLColor = (c, opacity = 1) => {
+    const a = Math.round(opacity * 255).toString(16).padStart(2, '0');
+    if (Array.isArray(c)) { // [r, g, b]
+        return a + c[2].toString(16).padStart(2, '0') + c[1].toString(16).padStart(2, '0') + c[0].toString(16).padStart(2, '0');
+    }
+    const hex = c.replace('#', ''); // ff0000 (Red)
+    const r = hex.substring(0, 2), g = hex.substring(2, 4), b = hex.substring(4, 6);
+    return a + b + g + r;
+};
 
 self.onmessage = async (e) => {
-    const { arraybuffer, name } = e.data;
-    console.log(`--------------------------\n    PBF => KMZ\n--------------------------`);
+    const { buf, name, gz } = e.data;
+    try {
+        const pbf = await new PBF().name(name).set(buf);
+        const embeddedFiles = []; // ZIPに同梱するファイルのリスト
 
-    const pbf = await new PBF().name(name).set(arraybuffer);
-    const zipFiles = []; // encodeZIP に渡す File オブジェクト配列
-    const iconMap = new Map();
-    let iconCount = 0;
+        let kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n`;
 
-    const toKmlColor = (rgba) => {
-        if (!rgba) return "ffffffff";
-        const m = rgba.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
-        if (!m) return "ffffffff";
-        const f = (n) => Math.round(n).toString(16).padStart(2, '0');
-        const a = f((m[4] === undefined ? 1 : parseFloat(m[4])) * 255);
-        return `${a}${f(m[3])}${f(m[2])}${f(m[1])}`;
-    };
+        // 共有スタイルの定義（メモリ節約のためスタイルはまとめる）
+        kml += `  <Style id="defaultStyle">\n    <LineStyle><color>ff0000ff</color><width>2</width></LineStyle>\n    <PolyStyle><color>400000ff</color></PolyStyle>\n  </Style>\n`;
 
-    let kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n\t<name>${name}</name>\n`;
+        for (let i = 0, len = pbf.length; i < len; i++) {
+            const f = pbf.getFeature(i);
+            const { type, coordinates: c } = f.geometry;
+            const { color, fillOpacity, iconData, iconName } = f.properties;
 
-    pbf.fmap.forEach((t, i) => {
-        const feat = pbf.getFeature(i);
-        const props = feat.properties;
-        kml += `\t<Placemark>\n`;
-        if (props.name) kml += `\t\t<name>${props.name}</name>\n`;
-        
-        // アイコン処理 (Blobがある場合)
-        if (props.icon instanceof Blob) {
-            let fname = iconMap.get(props.icon);
-            if (!fname) {
-                fname = `files/icon_${iconCount++}.png`;
-                iconMap.set(props.icon, fname);
-                zipFiles.push(new File([props.icon], fname, { type: props.icon.type }));
+            kml += `  <Placemark>\n    <name>${f.id || i}</name>\n`;
+
+            // --- カラーハンドリング ---
+            if (color) {
+                const kmlColor = toKMLColor(color, fillOpacity || 1);
+                kml += `    <Style><LineStyle><color>${kmlColor}</color></LineStyle><PolyStyle><color>${kmlColor}</color></PolyStyle></Style>\n`;
+            } else {
+                kml += `    <styleUrl>#defaultStyle</styleUrl>\n`;
             }
-            kml += `\t\t<Style><IconStyle><Icon><href>${fname}</href></Icon></IconStyle></Style>\n`;
+
+            // --- ファイルの埋め込み (アイコン等) ---
+            if (iconData && iconName) {
+                const iconPath = `files/${iconName}`;
+                kml += `    <Style><IconStyle><Icon><href>${iconPath}</href></Icon></IconStyle></Style>\n`;
+                // iconDataがBlobやArrayBufferなら、後でZIPに詰めるために保持
+                embeddedFiles.push(new File([iconData], iconPath));
+            }
+
+            kml += `    <ExtendedData>\n`;
+            for (const [k, v] of Object.entries(f.properties)) {
+                if (v !== null && typeof v !== 'object' && !['iconData', 'iconName'].includes(k)) {
+                    kml += `      <Data name="${k}"><value>${v}</value></Data>\n`;
+                }
+            }
+            kml += `    </ExtendedData>\n`;
+
+            // ジオメトリ（経度,緯度,0）
+            const pos = pt => `${pt[0]},${pt[1]},0`;
+            const posList = r => r.map(pos).join(" ");
+            if (type === "Point") kml += `    <Point><coordinates>${pos(c)}</coordinates></Point>\n`;
+            else if (type === "LineString") kml += `    <LineString><coordinates>${posList(c)}</coordinates></LineString>\n`;
+            else if (type === "Polygon") {
+                kml += `    <Polygon>\n`;
+                c.forEach((r, j) => {
+                    const t = j === 0 ? "outerBoundaryIs" : "innerBoundaryIs";
+                    kml += `      <${t}><LinearRing><coordinates>${posList(r)}</coordinates></LinearRing></${t}>\n`;
+                });
+                kml += `    </Polygon>\n`;
+            }
+            kml += `  </Placemark>\n`;
         }
+        kml += `</Document>\n</kml>`;
 
-        // ジオメトリ変換 (簡略化して記述)
-            kml += `\t\t<ExtendedData>\n`;
-        for (let key in props) {
-            if (["name", "description", "style", "icon", "bbox"].includes(key)) continue;
-            const val = typeof props[key] === 'object' ? JSON.stringify(props[key]) : props[key];
-            kml += `\t\t\t<Data name="${key}"><value>${val}</value></Data>\n`;
+        const kmlFile = new File([kml], `doc.kml`, { type: "application/vnd.google-earth.kml+xml" });
+
+        if (gz) {
+            // KMZとしてパッケージング。doc.kml と files/ を同梱
+            const zip = await encodeZIP([kmlFile, ...embeddedFiles], `${name}.kmz`);
+            self.postMessage(zip);
+        } else {
+            self.postMessage(kmlFile);
         }
-        kml += `\t\t</ExtendedData>\n`;
-
-        kml += `\t\t${toKmlGeom(feat.geometry)}\n`;
-        kml += `\t</Placemark>\n`;
-    });
-    kml += `</Document>\n</kml>`;
-    zipFiles.unshift(new File([kml], `${name}.kml`, { type: "application/vnd.google-earth.kml+xml" }));
-
-    console.log(`preparing deflation...`);
-    const file = await encodeZIP(zipFiles, name + ".kmz");
-    console.log(" => Done : ", file.name, file.size.toLocaleString(), "bytes");
-    self.postMessage(file);
+    } catch (err) { self.postMessage(null); }
 };

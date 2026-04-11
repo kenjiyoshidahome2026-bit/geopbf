@@ -27,6 +27,7 @@ async function streamGeoJSON(file, callback) {
 }
 self.onmessage = async (e) => {
     const { file, precision } = e.data;
+    const keytub = {}; // ★ 追記：これが必要 
     const pbf = new PBF({ name: file.name.replace(/\.[^\.]+$/, ""), precision });
     await streamGeoJSON(file, f => f.properties && Object.keys(f.properties).forEach(k => keytub[k] = true));
     pbf.setHead(Object.keys(keytub).sort());

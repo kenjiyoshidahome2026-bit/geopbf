@@ -54,10 +54,8 @@ class PBF {
         const e = self.e;
         const fmap = self.fmap;
         const props = self.props;
-
         const bufsReader = new readBufs();
         let pos = 0; // デフォルト値を 0 に
-
         pbf.readFields(tag => {
             if (tag === TAGS.NAME) self.name(pbf.readString());
             else if (tag === TAGS.DESCRIPTION) self.description(pbf.readString());
@@ -67,48 +65,36 @@ class PBF {
             else if (tag === TAGS.PRECISION) self.e = Math.pow(10, self._precision = pbf.readVarint());
             else if (tag === TAGS.FARRAY) pos = pbf.pos;
         });
-
         self.bufs = await bufsReader.close();
         self.end = pbf.pos;
-        
-        // pos が有効な場合のみ読み込みを続行
-        if (pos > 0) {
-            pbf.pos = pos; 
-            pbf.readMessage(tag => {
-                if (tag !== TAGS.FEATURE) return;
-                var fpos, gpos, type, garray = [], tarray = [];
-                const values = [], q = new Array(keys.length);
-                fpos = pbf.pos;
-                pbf.readMessage(ftag => {
-                    if (ftag === TAGS.GEOMETRY) {
-                        gpos = pbf.pos;
-                        pbf.readMessage(gtag => {
-                            if (gtag === TAGS.GTYPE) type = pbf.readVarint(); 
-                            else if (gtag === TAGS.GARRAY) {
-                                pbf.readMessage(gatag => {
-                                    if (gatag === TAGS.GEOMETRY) {
-                                        garray.push(pbf.pos);
-                                        pbf.readMessage(gaatag => {
-                                            if (gaatag === TAGS.GTYPE) tarray.push(pbf.readVarint()); 
-                                        });
-                                    }
-                                });
-                            }
-                        });
-                    }
-                    else if (ftag === TAGS.VALUE) {
-                        pbf.readVarint();
-                        values.push(readValue(self));
-                    }
-                    else if (ftag === TAGS.INDEX) {
-                        var end = pbf.readVarint() + pbf.pos, vpos = 0;
-                        while (pbf.pos < end) q[pbf.readVarint()] = values[vpos++];
-                    }
-                });
-                fmap.push(type == 6 ? [fpos, gpos, type, garray, tarray] : [fpos, gpos, type]);
-                props.push(q);
-            });
-        }
+        if (!pos) return self;
+		pbf.pos = pos; 
+		pbf.readMessage(tag => {
+			if (tag !== TAGS.FEATURE) return;
+			var fpos, gpos, type, garray = [], tarray = [];
+			const values = [], q = new Array(keys.length);
+			fpos = pbf.pos;
+			pbf.readMessage(ftag => {
+				if (ftag === TAGS.GEOMETRY) { gpos = pbf.pos;
+					pbf.readMessage(gtag => { if (gtag === TAGS.GTYPE) type = pbf.readVarint(); 
+						else if (gtag === TAGS.GARRAY) pbf.readMessage(gatag => {
+							if (gatag === TAGS.GEOMETRY) {
+								garray.push(pbf.pos);
+								pbf.readMessage(gaatag => (gaatag === TAGS.GTYPE) && tarray.push(pbf.readVarint()));
+							}
+						});
+					});
+				} else if (ftag === TAGS.VALUE) {
+					pbf.readVarint();
+					values.push(readValue(self));
+				} else if (ftag === TAGS.INDEX) {
+					const end = pbf.readVarint() + pbf.pos; let vpos = 0;
+					while (pbf.pos < end) q[pbf.readVarint()] = values[vpos++];
+				}
+			});
+			fmap.push(type == 6 ? [fpos, gpos, type, garray, tarray] : [fpos, gpos, type]);
+			props.push(q);
+		});
         return self;
     }
     get size() { return this.end; }

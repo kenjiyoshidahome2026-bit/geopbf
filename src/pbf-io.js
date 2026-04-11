@@ -7,6 +7,8 @@ class PBFIO {
         
         const { Bucket, Cache, Fetch } = nativeBucket(); // 最新形式
         this.bucket = await Bucket(`${this.dire}/pbf`);
+        this.bucket.isAlive().then(flag=> flag || console.warn("Bucket failed to nonnect: "));
+        console.log(this.bucket)
         this.cache = await Cache(`${this.dire}/pbf`);
         this.nativeFetch = Fetch; // インスタンスに保存
         this.fetchCache = await Cache(`${this.dire}/loaded`);
@@ -49,7 +51,7 @@ class PBFIO {
     async save(pbf) {
         const name = pbf.name(); if (!name) return null;
     //    console.log("PBFIO.save check:", { name, pbf }); // ★ここをチェック
-        const file = new File([pbf.arrayBuffer], pbf._name + ".pbf", { type: "application/x-geopbf" });
+        const file = new File([pbf.arrayBuffer], pbf._name + ".geopbf", { type: "application/x-geopbf" });
     //    const file = await pbf.pbfFile();
         console.log("pbffile", file)
         if (!file) return null;

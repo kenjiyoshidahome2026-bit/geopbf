@@ -4,8 +4,6 @@ const getEncoder = async (encoding) => {
     if (encoding === "sjis") {
         const Encoding = (await import('https://esm.sh/encoding-japanese@2.1.0')).default;
         return str => new Uint8Array(Encoding.convert(str, {from: 'UNICODE', to: 'SJIS', type: 'array' }));
-        // const { encode } = (await import('https://esm.run/encoding-japanese-v2'));
-        // return str => encode(str); // これだけでSJISのUint8Arrayが返る    
     }
     const utf8Encoder = new TextEncoder();
     return str => utf8Encoder.encode(str);
@@ -50,7 +48,6 @@ function writeShp(pbf, name, farray, type) {
         var recBytes = rec.byteLength;
         SHX.writeInt32(fileBytes / 2).writeInt32(recBytes / 2 - 4);
         fileBytes += recBytes;
-    //    type == 1 || bb && (bbox = mergebbox(bbox, bb));
         return rec;
     });
     var SHP = new WBUF(fileBytes)
@@ -93,34 +90,12 @@ function writeShp(pbf, name, farray, type) {
             coords.forEach(t=>t.forEach(u=>u&&bin.writeFloat64(u[0], true).writeFloat64(u[1], true)));
             return bin;
     }
-    // function mergebbox(bbox, [a,b,c,d]) {
-    //     if (bbox === null) bbox = [a,b,c,d];
-    //     else {
-    //         if (bbox[0] > a) bbox[0] = a;
-    //         if (bbox[1] > b) bbox[1] = b;
-    //         if (bbox[2] < c) bbox[2] = c;
-    //         if (bbox[3] < d) bbox[3] = d;
-    //     }
-    //     return bbox;
-    // }
 }
 ////--------------------------------------------------------------------------------------------------------------------------	
 function writeDbf(pbf, name, farray, encoding, encoder) {
     const parray = farray.map(t=>Array.isArray(t)?t[0]:t), recordSize = farray.length;
     const props = parray.map(i=>pbf.getProperties(i));
-    // const encoder = (() => {
-    //     if (encoding == "sjis") {
-    //         return str => {
-    //             const unicodeArray = Encoding.stringToCodePoints(str);
-    //             const sjisArray = Encoding.convert(unicodeArray, { to: 'SJIS', from: 'UNICODE' });
-    //             return new Uint8Array(sjisArray);
-    //         };
-    //     } else {
-    //         const enc = new TextEncoder();
-    //         return s => enc.encode(s);
-    //     }
-    // })();
-    const stringify = q => {
+     const stringify = q => {
         return "{"+Object.entries(q).map(([k,v])=>`"${k}":${JSON.stringify(v instanceof ImageData?{}:v)}`).join(",")+"}";
     }
     const strlen = s => encoder(typeof s == "object"?stringify(s):String(s)).length;
@@ -177,11 +152,6 @@ function writeDbf(pbf, name, farray, encoding, encoder) {
     var DBF = new WBUF(fileBytes).writeUint8(3).writeUint8(Y - 1900).writeUint8(M).writeUint8(D)
         .writeUint32(recordSize, true).writeUint16(headerBytes, true).writeUint16(recordBytes, true).skip(17)
         .writeUint8(LDID).skip(2)
-    // fields.reduce((pos, {name,type,length,precision}) => {
-    //     DBF.writeBuffer(encoder(name), 11).writeUint8(type.charCodeAt(0)).writeUint32(pos, true)
-    //     .writeUint8(length).writeUint8(precision).skip(14);
-    //     return pos + 32;
-    // }, 1);
     fields.reduce((dataOffset, { name, type, length, precision }) => {
         DBF.writeBuffer(encoder(name), 11).writeUint8(type.charCodeAt(0)).writeUint32(dataOffset, true)
            .writeUint8(length).writeUint8(precision).skip(14);
@@ -195,8 +165,7 @@ function writeDbf(pbf, name, farray, encoding, encoder) {
             let value = rec[name]; if (value===undefined) return DBF.skip(length);
             switch (type) {
             case 'L': DBF.writeUint8(!!value ? 84 : 70); break;
-            case 'N': //DBF.writeBuffer(encoder(fill(value.toFixed(precision), length))); break;
-                const numStr = value.toFixed(precision).padStart(length, " ");
+            case 'N': const numStr = value.toFixed(precision).padStart(length, " ");
                 DBF.writeBuffer(encoder(numStr)); break;
             case 'D': DBF.writeBuffer(encoder(yyyymmdd(value)), length); break;
             case 'C': 
@@ -214,14 +183,14 @@ function writeDbf(pbf, name, farray, encoding, encoder) {
     return new File([DBF.buffer()], name + '.dbf', {type:"application/octet-stream"});
 }
 ////=======================================================================================================================
-self.onmessage = async (e) => {//async function shpenc(arraybuffer, name, encoding, level = 3) {
-    const {arraybuffer, name, encoding} = e.data;
+self.onmessage = async (e) => {
+    const {buf, name, encoding} = e.data;
     const encoder = await getEncoder(encoding);
 	const prj  = `GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]]`;
 	console.log(`--------------------------\n    PBF => Shape File\n--------------------------`)
 	const shpTypes = [["point", 1],["multipoint", 8],["polyline", 3],["polygon", 5]];
 	const types = [[],[],[],[],[]];
-	const pbf = await new PBF().name(name).set(arraybuffer); //console.log(pbf);
+	const pbf = await new PBF().name(name).set(buf); //console.log(pbf);
 	pbf.fmap.forEach((t,i)=>{
 		if (t[2] < 6) types[[0,1,2,2,3,3][t[2]]].push(i);
 		else t[4].forEach((u,j)=>types[[0,1,2,2,3,3][u]].push([i,j]));
@@ -237,11 +206,7 @@ self.onmessage = async (e) => {//async function shpenc(arraybuffer, name, encodi
         zipFiles.push(new File([encoding], fname + '.cpg', {type:"text/plain"}));
 	});
 	console.log(`preparing deflation...`);
-//	let cname = "";
-//	const update = v => v.currentFile == cname || console.log("deflating file: " + ((cname = v.currentFile)||"done"), "progression: " + v.percent.toFixed(2) + " %");
 	const file = await encodeZIP(zipFiles, name+".zip");
-// //	console.log(blob)
-// 	const file = new File([blob], name+".zip", {type:"application/zip", lastModified:new Date()});
 	console.log(" => Done : ", file.name, "size: " + file.size.toLocaleString() + " bytes");
 	self.postMessage(file);
 };

@@ -2,22 +2,39 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>geopbf Full Stack Test</title>
-    <link rel="stylesheet" href="./demo.scss">
+    <fabicon></fabicon>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GeoPBF Hub - GIS Tinker Station</title>
 </head>
 <body>
-    <div class="test-container">
+    <div class="container">
         <header>
-            <h1>geopbf / native-bucket 統合テスト</h1>
-            <p>Fetch → PBF化 → サーバー保存 → 相互変換のフルパイプライン検証</p>
+            <h1>GeoPBF <span>Hub</span></h1>
+            <p>~ new GIS sollution ~</p>
         </header>
-
-        <div class="controls">
-            <button id="run-all">全てのテストを実行</button>
-        </div>
-
-        <div id="test-list" class="test-list">
-            </div>
+        <main class="stream-layout">
+            <section class="control-panel">
+                <div class="input-section">
+                    <label>Remote Resource</label>
+                    <div class="url-input-group">
+                        <input type="text" id="url-field" placeholder="Enter URL (GeoJSON, KMZ, GML...)" />
+                        <button id="run-url" class="btn-primary">Fetch & Process</button>
+                    </div>
+                </div>
+                <div class="input-section">
+                    <label>Local Files</label>
+                    <div id="drop-zone" class="drop-zone">
+                        <div class="dz-content">
+                            <span class="icon">🔬</span>
+                            <p>Drop <strong>GIS Files</strong> here (or Click here to select your file)</p>
+                            <small>GeoJSON/TopoJSON/zip(Shape)/KMZ/KML/GML and PBF (width gzip/zip available)</small>
+                        </div>
+                        <input type="file" id="file-picker" multiple style="display:none" />
+                    </div>
+                </div>
+            </section>
+            <div id="test-list" class="test-feed"></div>
+        </main>
     </div>
     <script type="module" src="./demo.js"></script>
 </body>

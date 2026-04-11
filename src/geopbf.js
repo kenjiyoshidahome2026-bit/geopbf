@@ -1,27 +1,14 @@
-import { worker } from "./worker.js"; 
 import { PBF } from "./pbf-extension.js";
 import { pbfio } from "./pbf-io.js";
 import { Logger } from "./logger.js";
 import { topo2geo } from "./topo2geo.js";
-// native-bucket から gzip 機能をインポート
-import { gzip, gunzip, isGzip } from "../../native-bucket/src/gzip.js";
+import { gunzip, isGzip } from "../../native-bucket/src/gzip.js";
 const logger = new Logger();
+//  ----------------------------------------------------------------------------------------
 let serverPromise = null;
-/**
- * PBFIO の初期化を管理
- */
-async function getServer() {
-    if (!serverPromise) {
-        serverPromise = pbfio("GIS").catch(e => {
-            logger.warn("PBFIO initialization failed.", e);
-            return null;
-        });
-    }
-    return await serverPromise;
-}
-/**
- * メイン関数: 全ての GIS データを PBF 化
- */
+const getServer = async () => serverPromise || (serverPromise = pbfio("GIS")
+        .catch(e => { logger.warn("PBFIO initialization failed.", e); return null; }));
+//  ----------------------------------------------------------------------------------------
 export async function geopbf(data, options = {}) {
     const isString = _ => (typeof _ == "string");
     const isObject = _ => (Object.prototype.toString.call(_) === '[object Object]' || Array.isArray(_));
@@ -65,16 +52,9 @@ export async function geopbf(data, options = {}) {
         }
         return null;
         async function file2json(file) {
-            // 大容量(100MB〜)は worker.js で非同期パース
-            // if (file.size > 100 * 1024 * 1024) {
-            //     const json = await worker(async (f) => JSON.parse(await f.text()), file);
-            //     return toFeatureCollection(json);
-            // }
-            try {
-                const json = toFeatureCollection(JSON.parse(await file.text()));
-                json.name = file.name.split("/").reverse()[0].replace(/\.[^\.]+$/, "");
-                return json;
-            } catch (e) { return null; }
+            const json = toFeatureCollection(JSON.parse(await file.text()));
+            json.name = file.name.split("/").reverse()[0].replace(/\.[^\.]+$/, "");
+            return json;
         }
         async function decoder(type, file) {
             const params = { 
@@ -101,31 +81,27 @@ export async function geopbf(data, options = {}) {
         }
     }
 }
-// --- Prototype Extensions ---
-async function save() {
-    const server = await getServer();
-    const name = await server.save(this);
-    return name? this: null;
-}
-async function encoder(type, pbf) {
-    const workerUrl = new URL(`../worker/${type}enc.js`, import.meta.url);
-    const w = new Worker(workerUrl, { type: 'module' });
-    return new Promise(resolve => {
+//  ---------------------------------------------------------------------------------------- Prototype Extensions 
+const runEncoder = (pbf, type, gz, encoding) => {
+    const url = new URL(`../worker/${type}enc.js`, import.meta.url)
+    const w = new Worker(url, { type: 'module' });
+    const name = pbf._name, buf = pbf.arrayBuffer; 
+    return new Promise(resolve => { 
         w.onmessage = e => { w.terminate(); resolve(e.data); };
-        w.postMessage({ arraybuffer: pbf.arrayBuffer, name: pbf._name });
+        w.onerror = () => { w.terminate(); logger.error(`encode error: [${type}]`); resolve(null); };
+        w.postMessage({ buf, name, gz, encoding }, [buf]);
     });
-}
-const gz = (flag,file) => flag? gzip(file):file;
-async function pbfFile(flag) { return gz(flag, new File([this.arrayBuffer], this._name + ".pbf", { type: "application/x-geopbf" })); }
-async function geojsonFile(flag) {
-    const a = [`{"type":"FeatureCollection","name":"${this._name}","features":[`, ...this.fmap.map((_, i) => (i ? "," : "") + JSON.stringify(this.getFeature(i))), ']}'];
-    return gz(flag, new File(a, this._name + ".geojson", { type: "application/json" }));
-}
-async function topojsonFile(flag) { return gz(flag, new File([JSON.stringify(this.topojson)], this._name + ".topojson", { type: "application/json" })); }
-async function shape() { return encoder("shp", this); }
-async function kmz(flag) { return gz(flag, await encoder("kmz", this)); }
-async function gml(flag) { return gz(flag, await encoder("gml", this)); }
+};
+const methods = {
+    async save() { const s = await getServer(); return s && await s.save(this) ? this : null; },
+    async pbfFile(flag) { return runEncoder(this, "pbf", flag); },
+    async geojsonFile(flag) { return runEncoder(this, "json", flag); },
+    async topojsonFile(flag) { return runEncoder(this, "topo", flag); },
+    async shape(encoding = "utf8") { return runEncoder(this, "shp", false, encoding); },
+    async kmz(flag = true) { return runEncoder(this, "kmz", flag); },//flag: true=>kmz, false=>kml
+    async gml(flag) { return runEncoder(this, "gml", flag); }
+};
 
-[save, pbfFile, geojsonFile, topojsonFile, shape, kmz, gml].forEach(func => {
-    Object.defineProperty(PBF.prototype, func.name, { value: func, configurable: false, enumerable: false });
+Object.entries(methods).forEach(([name, func]) => {
+    Object.defineProperty(PBF.prototype, name, { value: func, configurable: false, enumerable: false });
 });
