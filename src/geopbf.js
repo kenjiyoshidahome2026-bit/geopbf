@@ -57,20 +57,24 @@ export async function geopbf(data, options = {}) {
             return json;
         }
         async function decoder(type, file) {
-            const params = { 
-                file, 
+            const params = {
+                file, // ArrayBuffer ではなく File オブジェクトをそのまま渡す
                 precision: options.precision || 6,
                 encoding: (options.encoding || "utf8").toLowerCase().replace(/[\-\_]/g, "").replace(/shiftjis/, "sjis")
             };
-            const workerUrl = new URL(`../worker/${type}dec.js`, import.meta.url);
-            const w = new Worker(workerUrl, { type: 'module' });
+            const url = new URL(`../worker/${type}dec.js`, import.meta.url);
+            const w = new Worker(url, { type: 'module' });
             return new Promise(resolve => {
-                w.onmessage = e => { w.terminate(); resolve(e.data ? new PBF(options).set(e.data.data) : null); };
+                w.onmessage = async e => {
+                    w.terminate();
+                    // Worker からは arrayBuffer が返ってくるので、それを set する
+                    resolve(e.data ? new PBF(options).set(e.data.data) : null);
+                };
                 w.onerror = () => { w.terminate(); resolve(null); };
-                w.postMessage(params);
+                w.postMessage(params); // File オブジェクトの受け渡しはクローンにより安全
             });
         }
-        function toFeatureCollection(q) {
+       function toFeatureCollection(q) {
             const fc = a => ({ type: "FeatureCollection", features: a });
             const f = g => ({ type: "Feature", geometry: g, properties: {} });
             return Array.isArray(q) ? fc(q.filter(t => isObject(t) && t.type == "Feature")) :
