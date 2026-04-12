@@ -103,8 +103,8 @@ class SHP {
 	}
 }
 self.onmessage = async (e) => {
-	const { buf, name, encoding, precision } = e.data;
-	const entries = await decodeZIP(new Blob([buf]));
+	const { file, encoding, precision } = e.data, name = file.name;
+	const entries = await decodeZIP(file);
 	const keySet = new Set();
 	const shpFiles = entries.filter(t => t.name.match(/\.shp$/i));
 	const dbs = await Promise.all(shpFiles.map(async f => {
