@@ -59,7 +59,7 @@ class PBF {
         pbf.readFields(tag => {
             if (tag === TAGS.NAME) self.name(pbf.readString());
             else if (tag === TAGS.DESCRIPTION) self.description(pbf.readString());
-            else if (tag === TAGS.LISENCE) self.lisence(pbf.readString());
+            else if (tag === TAGS.LICENSE) self.license(pbf.readString());
             else if (tag === TAGS.KEYS) keys.push(pbf.readString());
             else if (tag === TAGS.BUFS) bufsReader.set(pbf.readBytes());
             else if (tag === TAGS.PRECISION) self.e = Math.pow(10, self._precision = pbf.readVarint());
