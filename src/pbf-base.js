@@ -362,18 +362,6 @@ const set = (obj, name, value) => {
         (name in obj) || Object.defineProperty(obj, name, { value, configurable: false, enumerable: false});
     } else Object.entries(name).map(t=>set(obj, ...t))
 }
-set(PBF, {TAGS, makeKeys, dataType, dataTypeNames, geometryTypes, geometryMap, concatinate});
+set(PBF, {TAGS, makeKeys, dataType, dataTypeNames, geometryTypes, geometryMap});
 this && set(this, {PBF});
-async function concatinate(pbfs, name) { pbfs = pbfs.filter(t=> t instanceof PBF);
-    if (pbfs.length == 0) return new PBF(); else if (pbfs.length == 1) return pbfs[0];
-    const precisions = pbfs.map(t=>t.precision());
-    if (!precisions.slice(1).every(t=>t==precisions[0])) return (console.error("PBF concatinate: precision is not equal."), null);
-    name = name||pbfs[0].name();
-    const props = pbfs.map(pbf=>pbf.properties);
-    const pbf = new PBF({name}).setHead(...(await makeKeys(props.flat())));
-    pbf.setBody(()=>pbfs.forEach((t, n)=>{
-        t.each(i=>pbf.setMessage(PBF.TAGS.FEATURE, ()=> { pbf.copyGeometry(t,i); pbf.setProperties(props[n][i]); }));
-    })).close();
-    return pbf.getPosition();
-}
 export { PBF };
