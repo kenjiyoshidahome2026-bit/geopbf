@@ -1,4 +1,4 @@
-import { PBF } from "../src/pbf-extension.js";
+import { PBF } from "../pbf-extension.js";
 
 self.onmessage = async (e) => {
     const { buf, name, gz } = e.data;

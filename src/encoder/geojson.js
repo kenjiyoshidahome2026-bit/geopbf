@@ -1,4 +1,4 @@
-import { PBF } from "../src/pbf-base.js";
+import { PBF } from "../pbf-base.js";
 const enc = new TextEncoder();
 
 self.onmessage = async (e) => {

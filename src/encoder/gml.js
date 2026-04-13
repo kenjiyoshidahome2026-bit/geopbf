@@ -1,5 +1,5 @@
-import { PBF } from "../src/pbf-base.js";
-import { encodeZIP } from "../../native-bucket/src/encodeZIP.js";
+import { PBF } from "../pbf-base.js";
+import { encodeZIP } from "../../../native-bucket/src/encodeZIP.js";
 
 self.onmessage = async (e) => {
     const { buf, name, gz } = e.data; // gzフラグをZIP/GZIPの切り替えに流用

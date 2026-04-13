@@ -1,4 +1,4 @@
-import { PBF } from "../src/pbf-base.js";
+import { PBF } from "../pbf-base.js";
 const getFeatures = (file, callback, isSync = false) => {
     const decoder = new TextDecoder();
     const chunkSize = 1024 * 1024;

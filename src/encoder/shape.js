@@ -1,5 +1,5 @@
-import {PBF} from "../src/pbf-base.js";
-import {encodeZIP} from "../../native-bucket/src/encodeZIP.js";
+import {PBF} from "../pbf-base.js";
+import {encodeZIP} from "../../../native-bucket/src/encodeZIP.js";
 const getEncoder = async (encoding) => {
     if (encoding === "sjis") {
         const Encoding = (await import('https://esm.sh/encoding-japanese@2.1.0')).default;
