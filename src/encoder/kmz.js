@@ -1,4 +1,4 @@
-import { PBF } from "../pbf-base.js";
+import { GeoPBF } from "../pbf-base.js";
 import { encodeZIP } from "../../../native-bucket/src/encodeZIP.js";
 
 // Webカラー(#RRGGBB) または [r,g,b,a] を KML形式(aabbggrr)に変換
@@ -15,7 +15,7 @@ const toKMLColor = (c, opacity = 1) => {
 self.onmessage = async (e) => {
     const { buf, name, gz } = e.data;
     try {
-        const pbf = await new PBF().name(name).set(buf);
+        const pbf = await new GeoPBF().name(name).set(buf);
         const embeddedFiles = []; // ZIPに同梱するファイルのリスト
 
         let kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n`;

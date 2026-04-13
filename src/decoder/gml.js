@@ -1,4 +1,4 @@
-import { PBF } from "../pbf-base.js";
+import { GeoPBF } from "../pbf-base.js";
 import { decodeZIP } from "../../../native-bucket/src/decodeZIP.js";
 
 function* getTags(src, tag) {
@@ -53,7 +53,7 @@ self.onmessage = async (e) => {
         }
     }
 
-    const pbf = new PBF({ name: file.name.replace(/\.[^\.]+$/, ""), precision: precision || 7 });
+    const pbf = new GeoPBF({ name: file.name.replace(/\.[^\.]+$/, ""), precision: precision || 7 });
     pbf.setHead(Array.from(keySet).sort());
 
     pbf.setBody(() => {

@@ -1,4 +1,4 @@
-import { gint } from "../gint.js";
+import { gint } from "./gint.js";
 
 export const purify = (topo) => {
     if (!topo || !topo.length) return;

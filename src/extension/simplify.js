@@ -1,4 +1,4 @@
-import { gint } from "../gint.js";
+import { gint } from "./gint.js";
 
 const rad = Math.PI / 180;
 

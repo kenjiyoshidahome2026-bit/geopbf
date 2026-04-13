@@ -1,4 +1,4 @@
-import {PBF} from "../pbf-base.js";
+import {GeoPBF} from "../pbf-base.js";
 import {encodeZIP} from "../../../native-bucket/src/encodeZIP.js";
 const getEncoder = async (encoding) => {
     if (encoding === "sjis") {
@@ -190,7 +190,7 @@ self.onmessage = async (e) => {
 	console.log(`--------------------------\n    PBF => Shape File\n--------------------------`)
 	const shpTypes = [["point", 1],["multipoint", 8],["polyline", 3],["polygon", 5]];
 	const types = [[],[],[],[],[]];
-	const pbf = await new PBF().name(name).set(buf); //console.log(pbf);
+	const pbf = await new GeoPBF().name(name).set(buf); //console.log(pbf);
 	pbf.fmap.forEach((t,i)=>{
 		if (t[2] < 6) types[[0,1,2,2,3,3][t[2]]].push(i);
 		else t[4].forEach((u,j)=>types[[0,1,2,2,3,3][u]].push([i,j]));

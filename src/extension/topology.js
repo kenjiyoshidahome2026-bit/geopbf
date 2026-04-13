@@ -1,9 +1,9 @@
-import { PBF } from "../pbf-base.js";
-import { gint } from "../gint.js";
+import { GeoPBF } from "../pbf-base.js";
+import { gint } from "./gint.js";
 import { purify } from "./purifier.js";
 import { simplify } from "./simplify.js";
 
-const TAGS = PBF.TAGS;
+const TAGS = GeoPBF.TAGS;
 
 export function analyzeTopology(self) {
     if (self.structures) return self.structures;

@@ -1,7 +1,7 @@
-import { PBF } from "./pbf.js";
+import { GeoPBF } from "./pbf-base.js";
 import { pbfio } from "./pbf-io.js";
-import { Logger } from "./logger.js";
-import { topo2geo } from "./topo2geo.js";
+import { Logger } from "./modules/logger.js";
+import { topo2geo } from "./modules/topo2geo.js";
 import { gunzip, isGzip } from "../../native-bucket/src/gzip.js";
 
 const logger = new Logger();
@@ -19,7 +19,7 @@ export async function geopbf(data, options = {}) {
     const isFile = _ => (_ instanceof Blob && ("name" in _));
     const isURL = _ => (_.match(/^https?\:\/\//));
     const isInZip = _ => (_.match(/.+\.zip#.+/i));
-    const isPBF = _ => (_ instanceof PBF);
+    const isPBF = _ => (_ instanceof GeoPBF);
 
     const decoder = async (type, file) => {
         const encoding = (options.encoding || "utf8").toLowerCase().replace(/[\-\_]/g, "").replace(/shiftjis/, "sjis");
@@ -27,7 +27,7 @@ export async function geopbf(data, options = {}) {
         const url = new URL(`./decoder/${type}.js`, import.meta.url);
         const w = new Worker(url, { type: 'module' });
         return new Promise(resolve => {
-            w.onmessage = async e => { w.terminate(); resolve(e.data ? new PBF(options).set(e.data.data) : null); };
+            w.onmessage = async e => { w.terminate(); resolve(e.data ? new GeoPBF(options).set(e.data.data) : null); };
             w.onerror = () => { w.terminate(); logger.error(`file decode error: [${type}]`); resolve(null); };
             w.postMessage(params);
         });
@@ -35,14 +35,14 @@ export async function geopbf(data, options = {}) {
 
     const pbf = await _geopbf(data);
     pbf && logger.success(`geopbf: ${pbf.name} (${pbf.size.toLocaleString()} bytes)`);
-    return pbf || new PBF(options);
+    return pbf || new GeoPBF(options);
     async function _geopbf(q) {
         if (!q) return null;
         if (isPBF(q)) return q;
-        if (isBuffer(q)) return new PBF(options).set(q);
+        if (isBuffer(q)) return new GeoPBF(options).set(q);
         if (isObject(q)) {
             q = toFeatureCollection(q);
-            return (q && q.features.length > 0) ? await new PBF(options).set(q) : null;
+            return (q && q.features.length > 0) ? await new GeoPBF(options).set(q) : null;
         }
         if (isFile(q)) {
             if (await isGzip(q)) return _geopbf(await gunzip(q));
@@ -104,5 +104,5 @@ const methods = {
 };
 
 Object.entries(methods).forEach(([name, func]) => {
-    Object.defineProperty(PBF.prototype, name, { value: func, configurable: false, enumerable: false });
+    Object.defineProperty(GeoPBF.prototype, name, { value: func, configurable: false, enumerable: false });
 });

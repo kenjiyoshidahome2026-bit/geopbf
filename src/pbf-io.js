@@ -1,4 +1,4 @@
-import { PBF } from "./pbf.js";
+import { GeoPBF } from "./pbf-base.js";
 class PBFIO {
     constructor(dire) { this.dire = dire || "GIS"; }
     async open() {
@@ -40,13 +40,13 @@ class PBFIO {
         const [val, ETag] = await Promise.all([this.cache(name), this.bucket.etag(name)]).catch(console.error);
         if (ETag === false) { // Etag === false はオフラインまたは通信異常
             console.warn(`PBF get warning: server is unreachable. Using local cache for ${name} if available.`);
-            return (val && val.Buff) ? new PBF().set(val.Buff) : null;
+            return (val && val.Buff) ? new GeoPBF().set(val.Buff) : null;
         } else if (ETag === null) { // Etag === null はサーバー上にファイルが存在しないことを意味する。ローカルにあっても消去するべき。
             console.error(`PBF get error: file(${name}) is not exist.`);
             if (val) await this.cache(name, null);
             return null;
         }
-        return new PBF().set(await this._sync(name, ETag));
+        return new GeoPBF().set(await this._sync(name, ETag));
     }
     async save(pbf) {
         const name = pbf.name(); if (!name) return null;

@@ -1,4 +1,4 @@
-import { PBF } from "../pbf-base.js";
+import { GeoPBF } from "../pbf-base.js";
 
 export async function dissolve(self, pname) {
     const keyIdx = self.keys.indexOf(pname);
@@ -31,7 +31,7 @@ export async function dissolve(self, pname) {
         return propObj;
     });
 
-    const pbf = new PBF({ name: self._name, precision: Math.log10(self.e) }).copyHead(self);
+    const pbf = new GeoPBF({ name: self._name, precision: Math.log10(self.e) }).copyHead(self);
     pbf.setBody(() => {
         groups.forEach((indices, idx) => {
             let mergedCoords = [];

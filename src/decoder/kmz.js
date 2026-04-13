@@ -1,4 +1,4 @@
-import { PBF } from "../pbf-base.js";
+import { GeoPBF } from "../pbf-base.js";
 import { decodeZIP } from "../../../native-bucket/src/decodeZIP.js";
 
 const parseCoords = (s) => s.trim().split(/\s+/).map(t => t.split(",").map(Number).slice(0, 2));
@@ -52,8 +52,8 @@ self.onmessage = async (e) => {
         const text = await entry.text();
         allFeatures.push(...kmlToFeatures(text, nameToRes));
     }
-    const [keys, bufs] = await PBF.makeKeys(allFeatures.map(f => f.properties));
-    const pbf = new PBF({ name: file.name.replace(/\.kmz$/, ""), precision });
+    const [keys, bufs] = await GeoPBF.makeKeys(allFeatures.map(f => f.properties));
+    const pbf = new GeoPBF({ name: file.name.replace(/\.kmz$/, ""), precision });
     pbf.setHead(keys, bufs);
     pbf.setBody(() => {
         allFeatures.forEach(f => pbf.setFeature(f));

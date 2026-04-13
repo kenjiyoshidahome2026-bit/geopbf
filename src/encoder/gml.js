@@ -1,10 +1,10 @@
-import { PBF } from "../pbf-base.js";
+import { GeoPBF } from "../pbf-base.js";
 import { encodeZIP } from "../../../native-bucket/src/encodeZIP.js";
 
 self.onmessage = async (e) => {
     const { buf, name, gz } = e.data; // gzフラグをZIP/GZIPの切り替えに流用
     try {
-        const pbf = await new PBF().name(name).set(buf);
+        const pbf = await new GeoPBF().name(name).set(buf);
         const pos = c => `${c[1]} ${c[0]}`;
         const posList = r => r.map(pos).join(" ");
 

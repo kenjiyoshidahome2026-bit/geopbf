@@ -1,7 +1,7 @@
 import Pbf from 'pbf';
-import { bufferTub, readBufs } from "./bufferTub.js";
-import { antimeridianFeature } from "./antimeridianFeature.js";
-import { cleanCoords } from "./cleanCoords.js";
+import { bufferTub, readBufs } from "./modules/bufferTub.js";
+import { antimeridianFeature } from "./modules/antimeridianFeature.js";
+import { cleanCoords } from "./modules/cleanCoords.js";
 
 const isSimpleObject = _ => Object.prototype.toString.call(_) === '[object Object]' && Object.keys(_).length;
 const isNumber = _ => typeof _ == "number";
@@ -15,7 +15,7 @@ const geometryMap = {}; geometryTypes.forEach((t, i) => geometryMap[t] = i);
 const dataTypeNames = ["NULL", "BOOL", "INTEGER", "FLOAT", "STRING", "DATE", "COLOR", "FUNC", "JSON", "BBOX", "BLOB", "IMAGE"];
 const DATATYPE = {}; dataTypeNames.map((s, i) => DATATYPE[s] = i); DATATYPE.UNKNOWN = -1;
 
-class PBF {
+class GeoPBF {
     constructor(options = {}) {
         this.pbf = new Pbf();
         this._name = options.name || "";
@@ -219,7 +219,7 @@ class PBF {
             else if (tag === TAGS.PRECISION) head.precision = pbf.readVarint();
             else pbf.skip(val);
         }
-        const out = new PBF();
+        const out = new GeoPBF();
         out.setHead(head.keys, head.bufs, Object.assign(head, meta));
         out.pbf.writeVarint(TAGS.FARRAY << 3 | 2);
         const bodyData = new Uint8Array(buffer).subarray(bodyPos);
@@ -401,5 +401,5 @@ function readGeometry(self, n, m) {
 }
 
 const setProp = (obj, name, value) => { if (typeof name == "string") { (name in obj) || Object.defineProperty(obj, name, { value, configurable: false, enumerable: false }); } else Object.entries(name).map(t => setProp(obj, ...t)) }
-setProp(PBF, { TAGS, makeKeys, dataType, dataTypeNames, geometryTypes, geometryMap });
-export { PBF };
+setProp(GeoPBF, { TAGS, makeKeys, dataType, dataTypeNames, geometryTypes, geometryMap });
+export { GeoPBF };

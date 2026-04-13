@@ -1,4 +1,4 @@
-import { PBF } from "../pbf-base.js";
+import { GeoPBF } from "../pbf-base.js";
 const getFeatures = (file, callback, isSync = false) => {
     const decoder = new TextDecoder();
     const chunkSize = 1024 * 1024;
@@ -66,7 +66,7 @@ self.onmessage = async (e) => {
     const threshold = 50 * 1024 * 1024;
     if (file.size < threshold) {
         const json = JSON.parse(await file.text());
-        const pbf = new PBF({ name: file.name.replace(/\.[^\.]+$/, ""), precision });
+        const pbf = new GeoPBF({ name: file.name.replace(/\.[^\.]+$/, ""), precision });
         await pbf.set(json);
         const res = pbf.arrayBuffer;
         self.postMessage({ type: "jsondec", data: res }, [res]);
@@ -83,7 +83,7 @@ self.onmessage = async (e) => {
                 }
             }
         }, false);
-        const pbf = new PBF({ name: file.name.replace(/\.[^\.]+$/, ""), precision });
+        const pbf = new GeoPBF({ name: file.name.replace(/\.[^\.]+$/, ""), precision });
         pbf.setHead(Array.from(keySet).sort());
         pbf.setBody(() => {
             getFeatures(file, f => pbf.setFeature(f), true);

@@ -1,4 +1,4 @@
-import { PBF } from "../pbf-base.js";
+import { GeoPBF } from "../pbf-base.js";
 import { decodeZIP } from "../../../native-bucket/src/decodeZIP.js";
 
 const view = a => new DataView(a.buffer, a.byteOffset, a.byteLength);
@@ -119,7 +119,7 @@ self.onmessage = async (e) => {
 		dbf.fields.forEach(field => keySet.add(field.name)); // プロパティ名を全収集
 		return [new SHP(shpBuf), dbf];
 	}));
-	const pbf = new PBF({ name, precision });
+	const pbf = new GeoPBF({ name, precision });
 	pbf.setHead(Array.from(keySet).sort());
 	pbf.setBody(() => {
 		dbs.filter(t => t).forEach(([shp, dbf]) => {

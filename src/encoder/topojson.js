@@ -1,9 +1,9 @@
-import { PBF } from "../pbf-extension.js";
+import { GeoPBF } from "../pbf-base.js";
 
 self.onmessage = async (e) => {
     const { buf, name, gz } = e.data;
     try {
-        const pbf = await new PBF({ name }).set(buf);
+        const pbf = await new GeoPBF({ name }).set(buf);
         const topo = pbf.topojson;
         const resStr = JSON.stringify(topo);
         let res = resStr;

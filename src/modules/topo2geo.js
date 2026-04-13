@@ -1,4 +1,4 @@
-import { PBF } from "./pbf-base.js";
+import { GeoPBF } from "../pbf-base.js";
 export function topo2geo(topo) {
     const { arcs, transform, objects } = topo;
     const { scale = [1, 1], translate = [0, 0] } = transform || {};
@@ -15,7 +15,7 @@ export function topo2geo(topo) {
         return coords;
     };
     const geom = g => { const {type} = g;
-        switch (PBF.geometryMap[type]) {
+        switch (GeoPBF.geometryMap[type]) {
             case 0: return { type, coordinates: tran(g.coordinates)};
             case 1: return { type, coordinates: decodePoints(g.coordinates)};
             case 2: return { type, coordinates: getCoords(g.arcs)};

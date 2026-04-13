@@ -1,10 +1,10 @@
-import { PBF } from "../pbf-base.js";
+import { GeoPBF } from "../pbf-base.js";
 const enc = new TextEncoder();
 
 self.onmessage = async (e) => {
     const { buf, name, gz } = e.data;
     try {
-        const pbf = await new PBF().name(name).set(buf);
+        const pbf = await new GeoPBF().name(name).set(buf);
         const { readable, writable } = new TransformStream();
         const writer = writable.getWriter();
         const out = gz ? readable.pipeThrough(new CompressionStream("gzip")) : readable;

@@ -1,4 +1,4 @@
-import { PBF } from "./pbf-base.js";
+import { GeoPBF } from "./pbf-base.js";
 import * as spatial from "./extension/spatial.js";
 import * as manipulate from "./extension/manipulate.js";
 import { nearPoint } from "./extension/nearPoint.js";
@@ -8,10 +8,10 @@ import { analyzeTopology, neighbors, mesh, merge } from "./extension/topology.js
 import { toTopoJSON } from "./extension/topojson.js";
 import { drawGeometry, view } from "./extension/view.js";
 
-const setGetter = (name, func) => { Object.defineProperty(PBF.prototype, name, { get: func, configurable: false, enumerable: false }); };
-const setPrototype = (name, func) => { Object.defineProperty(PBF.prototype, name, { value: func, configurable: false, enumerable: false }); };
-Object.defineProperty(PBF, 'update', { value: manipulate.update, configurable: false, enumerable: false });
-Object.defineProperty(PBF, 'concatinate', { value: manipulate.concatinate, configurable: false, enumerable: false });
+const setGetter = (name, func) => { Object.defineProperty(GeoPBF.prototype, name, { get: func, configurable: false, enumerable: false }); };
+const setPrototype = (name, func) => { Object.defineProperty(GeoPBF.prototype, name, { value: func, configurable: false, enumerable: false }); };
+Object.defineProperty(GeoPBF, 'update', { value: manipulate.update, configurable: false, enumerable: false });
+Object.defineProperty(GeoPBF, 'concatinate', { value: manipulate.concatinate, configurable: false, enumerable: false });
 
 setGetter("count", function () { return manipulate.count(this); });
 setGetter("lint", function () { return manipulate.lint(this); });
@@ -40,4 +40,4 @@ setPrototype("drawGeometry", function (n) { return drawGeometry(this, n); });
 setPrototype("context", function (ctx, proj) { this.ctx = ctx; this.proj = proj; return this; });
 setPrototype("view", function (canvas, props) { return view(this, canvas, props); });
 
-export { PBF };
+export { GeoPBF };

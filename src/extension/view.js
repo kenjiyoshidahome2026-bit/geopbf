@@ -1,9 +1,9 @@
-import { PBF } from "../pbf-base.js";
+import { GeoPBF } from "../pbf-base.js";
 
 export function drawGeometry(self, n) {
     const { pbf, fmap, e, ctx, proj, radius = 3 } = self;
     const map = fmap[n];
-    const { TAGS } = PBF;
+    const { TAGS } = GeoPBF;
 
     ctx.beginPath();
     const drawCoords = (pos, type) => {

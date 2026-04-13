@@ -1,4 +1,4 @@
-import { gint } from "../gint.js";
+import { gint } from "./gint.js";
 
 export function toTopoJSON(self) {
     const { e, bbox, structures } = self;
