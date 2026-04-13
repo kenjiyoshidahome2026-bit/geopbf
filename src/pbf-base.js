@@ -32,12 +32,12 @@ class PBF {
     precision(s) { if (s === undefined) return this._precision; this.e = Math.pow(10, this._precision = s); return this; }
     init() { this.keys = [], this.bufs = [], this.fmap = [], this.bin = {}; this.props = []; delete this.end; delete this.ctx; delete this.proj; return this; }
     empty() { this.pbf = new Pbf(); this.init(); this.name(""); return this; }
+
     async set(q) {
         if (q instanceof ArrayBuffer || ArrayBuffer.isView(q)) this.pbf = new Pbf(q);
         else if (isSimpleObject(q)) {
             const [keys, buffs] = this.noprop ? [[], []] : await makeKeys(q.features.map(t => t.properties));
-            ("name" in q) && this.name(q.name);
-            this.setHead(keys, buffs).setBody(q).close();
+            this.setHead(keys, buffs, { name: q.name }).setBody(q).close();
         } else return (console.error("PBF set: setting illegal value", q), this);
         return await this.getPosition();
     }
@@ -59,6 +59,7 @@ class PBF {
         this.bufs = await bufsReader.close();
         this.end = pbf.pos;
         if (!pos) return this;
+        this.bodyPos = pos;
         pbf.pos = pos;
         pbf.readMessage(tag => {
             if (tag !== TAGS.FEATURE) return;
@@ -94,8 +95,17 @@ class PBF {
     each(func) { return (this.fmap || []).map((t, i) => func(i, t, this.getProperties(i))); }
 
     setMessage(tag, func) { this.pbf.writeMessage(tag, func); return this; }
-    setHead(keys, bufs) {
-        this.keys = keys; this.bufs = bufs || []; this.keytub = {};
+
+    setHead(keys, bufs, meta = {}) {
+        if (meta.name !== undefined) this._name = meta.name;
+        if (meta.description !== undefined) this._description = meta.description;
+        if (meta.license !== undefined) this._license = meta.license;
+        if (meta.precision !== undefined) this.precision(meta.precision);
+
+        this.keys = keys || this.keys;
+        this.bufs = bufs || this.bufs || [];
+        this.keytub = {};
+
         this._name && this.pbf.writeStringField(TAGS.NAME, this._name);
         this._description && this.pbf.writeStringField(TAGS.DESCRIPTION, this._description);
         this._license && this.pbf.writeStringField(TAGS.LICENSE, this._license);
@@ -104,6 +114,7 @@ class PBF {
         this.bufs.forEach((t, i) => { this.pbf.writeBytesField(TAGS.BUFS, new Uint8Array(t)) });
         return this;
     }
+
     setBody(obj) {
         const func = (obj instanceof Function) ? obj : () => obj.features.forEach(t => this.setFeature(t))
         return this.setMessage(TAGS.FARRAY, func);
@@ -171,6 +182,51 @@ class PBF {
     get propertiesTable() { return [this.keys].concat(this.props); }
     get arrayBuffer() { return this.pbf.buf.buffer.slice(0, this.end); }
     get geojson() { return { type: "FeatureCollection", features: this.features, name: this.name() }; }
+
+    updateHeader(meta = {}) {
+        const oldBodyPos = this.bodyPos;
+        const bodyData = this.pbf.buf.subarray(oldBodyPos, this.end);
+        this.pbf = new Pbf();
+        this.setHead(this.keys, this.bufs, meta);
+        this.pbf.writeVarint(TAGS.FARRAY << 3 | 2);
+        this.pbf.writeVarint(bodyData.length);
+        const newBodyPos = this.pbf.pos;
+        this.pbf.writeBytes(bodyData);
+        this.close();
+        const diff = newBodyPos - oldBodyPos;
+        if (this.fmap && diff !== 0) {
+            this.fmap.forEach(f => {
+                f[0] += diff; f[1] += diff;
+                if (f[2] === 6 && f[3]) f[3] = f[3].map(p => p + diff);
+            });
+        }
+        this.bodyPos = newBodyPos;
+        return this;
+    }
+
+    static async update(buffer, meta = {}) {
+        const pbf = new Pbf(new Uint8Array(buffer));
+        const head = { keys: [], bufs: [], precision: 6 };
+        let bodyPos = -1;
+        while (pbf.pos < pbf.length) {
+            const val = pbf.readVarint(), tag = val >> 3;
+            if (tag === TAGS.FARRAY) { pbf.readVarint(); bodyPos = pbf.pos; break; }
+            if (tag === TAGS.NAME) head.name = pbf.readString();
+            else if (tag === TAGS.DESCRIPTION) head.description = pbf.readString();
+            else if (tag === TAGS.LICENSE) head.license = pbf.readString();
+            else if (tag === TAGS.KEYS) head.keys.push(pbf.readString());
+            else if (tag === TAGS.BUFS) head.bufs.push(pbf.readBytes());
+            else if (tag === TAGS.PRECISION) head.precision = pbf.readVarint();
+            else pbf.skip(val);
+        }
+        const out = new PBF();
+        out.setHead(head.keys, head.bufs, Object.assign(head, meta));
+        out.pbf.writeVarint(TAGS.FARRAY << 3 | 2);
+        const bodyData = new Uint8Array(buffer).subarray(bodyPos);
+        out.pbf.writeVarint(bodyData.length);
+        out.pbf.writeBytes(bodyData);
+        return out.close().arrayBuffer;
+    }
 }
 
 async function makeKeys(q) {

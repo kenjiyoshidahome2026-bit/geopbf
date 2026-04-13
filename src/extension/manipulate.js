@@ -1,4 +1,3 @@
-import Pbf from 'pbf';
 import { PBF } from "../pbf-base.js";
 
 const thenMap = async (a, func) => {
@@ -111,39 +110,11 @@ export async function mergePolygonByProperty(self, pname) {
 }
 
 export function header(self, meta = {}) {
-    if (meta.name !== undefined) self._name = meta.name;
-    if (meta.description !== undefined) self._description = meta.description;
-    if (meta.license !== undefined) self._license = meta.license;
-    const oldBodyPos = self.bodyPos, bodyData = self.pbf.buf.subarray(oldBodyPos, self.end);
-    self.pbf = new Pbf();
-    self.setHead(self.keys, self.bufs);
-    self.pbf.writeVarint(PBF.TAGS.FARRAY << 3 | 2); self.pbf.writeVarint(bodyData.length);
-    const newBodyPos = self.pbf.pos; self.pbf.writeBytes(bodyData);
-    self.close();
-    const diff = newBodyPos - oldBodyPos;
-    if (self.fmap && diff !== 0) { self.fmap.forEach(f => { f[0] += diff; f[1] += diff; if (f[2] === 6 && f[3]) f[3] = f[3].map(p => p + diff); }); }
-    self.bodyPos = newBodyPos; return self;
+    return self.updateHeader(meta);
 }
 
 export async function update(buffer, meta = {}) {
-    const pbf = new Pbf(new Uint8Array(buffer)), head = { keys: [], bufs: [], precision: 6 };
-    let bodyPos = -1;
-    while (pbf.pos < pbf.length) {
-        const val = pbf.readVarint(), tag = val >> 3;
-        if (tag === PBF.TAGS.FARRAY) { pbf.readVarint(); bodyPos = pbf.pos; break; }
-        if (tag === PBF.TAGS.NAME) head.name = pbf.readString();
-        else if (tag === PBF.TAGS.DESCRIPTION) head.description = pbf.readString();
-        else if (tag === PBF.TAGS.LICENSE) head.license = pbf.readString();
-        else if (tag === PBF.TAGS.KEYS) head.keys.push(pbf.readString());
-        else if (tag === PBF.TAGS.BUFS) head.bufs.push(pbf.readBytes());
-        else if (tag === PBF.TAGS.PRECISION) head.precision = pbf.readVarint();
-        else pbf.skip(val);
-    }
-    const out = new PBF({ name: meta.name !== undefined ? meta.name : head.name, description: meta.description !== undefined ? meta.description : head.description, license: meta.license !== undefined ? meta.license : head.license, precision: head.precision });
-    out.setHead(head.keys, head.bufs);
-    out.pbf.writeVarint(PBF.TAGS.FARRAY << 3 | 2); const bodyData = new Uint8Array(buffer).subarray(bodyPos);
-    out.pbf.writeVarint(bodyData.length); out.pbf.writeBytes(bodyData);
-    return out.close().arrayBuffer;
+    return PBF.update(buffer, meta);
 }
 
 export async function concatinate(pbfs, name) {
