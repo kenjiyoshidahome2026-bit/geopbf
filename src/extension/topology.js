@@ -57,9 +57,9 @@ export function analyzeTopology(self) {
     });
 
     self.point = buildPoints(structures[0]);
-    purify(structures[1]); // 交差解決
+    purify(structures[1]);
     self.polyline = buildArcs(structures[1], "polyline");
-    purify(structures[2].flat());
+    purify(structures[2].flatMap(t => t.coords));
     self.polygon = buildArcs(structures[2], "polygon");
 
     return (self.structures = structures);
@@ -104,7 +104,6 @@ function buildArcs(topo, type) {
         else t.arcs = processArc(t.coords);
     });
 
-    // メタ情報構築 (簡略化のため最小構成)
     const total = buffs.reduce((s, b) => s + b.length, 0);
     const buffer = new BigUint64Array(total), meta = new Uint32Array(buffs.length * 8);
     let offset = 0;
@@ -119,6 +118,8 @@ function buildArcs(topo, type) {
 
 export function neighbors(self, id) {
     const table = [];
+    if (!self.structures) analyzeTopology(self);
+    // 隣接関係抽出のロジックを簡潔に実装
     self.polygon.owner.forEach(owners => {
         owners.forEach(p => {
             owners.forEach(q => {

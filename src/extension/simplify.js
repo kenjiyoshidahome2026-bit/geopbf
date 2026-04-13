@@ -53,7 +53,5 @@ export const simplify = (arc) => {
         [p, nx].forEach(idx => { if (idx > 0 && idx < n - 1 && pos[idx] !== -1) { areas[idx] = Math.max(getArea(idx), maxA); up(pos[idx]); down(pos[idx]); } });
     }
 
-    for (let i = 1; i < n - 1; i++) {
-        arc[i] = gint.toL2(arc[i], getPhysRank(eff[i]));
-    }
+    for (let i = 1; i < n - 1; i++) arc[i] = gint.toL2(arc[i], getPhysRank(eff[i]));
 };
