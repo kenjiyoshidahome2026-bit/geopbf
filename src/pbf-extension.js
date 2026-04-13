@@ -4,6 +4,8 @@ import * as manipulate from "./extension/manipulate.js";
 import { nearPoint } from "./extension/nearPoint.js";
 import { contain } from "./extension/contain.js";
 import { dissolve } from "./extension/dissolve.js";
+import { analyzeTopology, neighbors } from "./extension/topology.js";
+import { toTopoJSON } from "./extension/topojson.js";
 
 const setGetter = (name, func) => { Object.defineProperty(PBF.prototype, name, { get: func, configurable: false, enumerable: false }); };
 const setPrototype = (name, func) => { Object.defineProperty(PBF.prototype, name, { value: func, configurable: false, enumerable: false }); };
@@ -28,5 +30,10 @@ setPrototype("header", function (meta) { return manipulate.header(this, meta); }
 setPrototype("concat", function (...args) { return manipulate.concatinate([this, ...args], this.name()); });
 
 setPrototype("dissolve", function (p) { return dissolve(this, p); });
+
+// トポロジー関連
+setPrototype("analyzeTopology", function () { return analyzeTopology(this); });
+setPrototype("neighbors", function (id) { return neighbors(this, id); });
+setGetter("topojson", function () { return toTopoJSON(this); });
 
 export { PBF };
