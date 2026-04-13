@@ -8,7 +8,6 @@ export function drawGeometry(self, n) {
     ctx.beginPath();
     const drawCoords = (pos, type) => {
         pbf.pos = pos;
-        const isPoly = type > 3;
         let lens = [];
 
         pbf.readMessage(tag => {
@@ -16,7 +15,6 @@ export function drawGeometry(self, n) {
             else if (tag === TAGS.COORDS) {
                 const end = pbf.readVarint() + pbf.pos;
                 let p = [0, 0];
-
                 const readNext = () => {
                     p[0] += pbf.readSVarint();
                     p[1] += pbf.readSVarint();
@@ -47,7 +45,6 @@ export function drawGeometry(self, n) {
                         }
                         ctx.closePath();
                     };
-
                     if (type === 4) lens.forEach(drawRing);
                     else {
                         for (let i = 0; i < lens[0]; i++) {
@@ -70,7 +67,6 @@ export async function view(self, canvas, props = {}) {
     const bbox = props.bbox || self.bbox;
     const w = canvas.width, h = canvas.height;
 
-    // D3.js の動的読み込み (未ロードの場合)
     let d3 = globalThis.d3;
     if (!d3) d3 = await import("https://esm.sh/d3-geo@3");
 
@@ -79,20 +75,16 @@ export async function view(self, canvas, props = {}) {
 
     const cx = (bbox[0] + bbox[2]) / 2;
     const cy = (bbox[1] + bbox[3]) / 2;
-
-    // 簡易的な距離計算 (d3.geoDistanceの代用)
     const dx = Math.abs(bbox[2] - bbox[0]) * Math.cos(cy * Math.PI / 180);
     const dy = Math.abs(bbox[3] - bbox[1]);
-    const scale = Math.min(w / dx, h / dy) * 50; // 調整係数
+    const scale = Math.min(w / dx, h / dy) * 50;
 
     proj.rotate([-cx, -cy, 0]).translate([w / 2, h / 2]).scale(scale);
 
     const offcanvas = new OffscreenCanvas(w, h);
     const ctx = offcanvas.getContext("2d");
 
-    self.ctx = ctx;
-    self.proj = proj;
-    self.radius = props.radius || 3;
+    self.ctx = ctx; self.proj = proj; self.radius = props.radius || 3;
 
     if (props.background) { ctx.fillStyle = props.background; ctx.fillRect(0, 0, w, h); }
     ctx.lineWidth = props.width || 1;
@@ -108,6 +100,5 @@ export async function view(self, canvas, props = {}) {
         ctx.stroke();
     });
 
-    const bitmap = offcanvas.transferToImageBitmap();
-    canvas.getContext("bitmaprenderer").transferFromImageBitmap(bitmap);
+    canvas.getContext("bitmaprenderer").transferFromImageBitmap(offcanvas.transferToImageBitmap());
 }
