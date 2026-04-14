@@ -57,7 +57,7 @@ export function analyzeTopology(self) {
     self.point = buildPoints(structures[0]);
     purify(structures[1]);
     self.polyline = buildArcs(structures[1], "polyline");
-    purify(structures[2].flatMap(t => t.coords));
+    purify(structures[2].flatMap(t => t.coords.map(ring => ({ coords: ring }))));
     self.polygon = buildArcs(structures[2], "polygon");
     return (self.structures = structures);
 }

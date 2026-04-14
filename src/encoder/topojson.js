@@ -1,4 +1,4 @@
-import { GeoPBF } from "../pbf-base.js";
+import { GeoPBF } from "../pbf.js";
 
 self.onmessage = async (e) => {
     const { buf, name, gz } = e.data;
@@ -15,7 +15,7 @@ self.onmessage = async (e) => {
             type: gz ? "application/gzip" : "application/json"
         }));
     } catch (err) {
-        console.error("TopoEnc Worker Error:", err);
+        console.error("Topojson encode Worker Error:", err);
         self.postMessage(null);
     }
 };
