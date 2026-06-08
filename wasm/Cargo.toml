@@ -1,0 +1,20 @@
+[package]
+name = "gint-wasm"
+version = "0.1.0"
+edition = "2021"
+
+# 🌟 1. WASMライブラリ（cdylib）としてコンパイルするための必須設定
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# 🌟 2. 必要な依存ライブラリの定義
+[dependencies]
+# JavaScriptとの仲介役（ラッパー生成など）を担う必須クレート
+wasm-bindgen = "0.2"
+
+# 🌟 3. 本番ビルド（WASMファイル）をさらに軽量・高速にするための最適化設定
+[profile.release]
+opt-level = 3        # 最高レベルの速度最適化を適用
+lto = true           # リンク時最適化（LTO）により不要なコードを徹底排除
+codegen-units = 1    # コンパイル単位を1つにして最適化の効率を最大化
+panic = "abort"      # エラー時のバックトレースを削りバイナリサイズを削減
