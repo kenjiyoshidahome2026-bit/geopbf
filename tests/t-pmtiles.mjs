@@ -14,7 +14,8 @@ import { GeoPBF } from "../src/pbf-base.js";
 import { bakeGint } from "../src/convert/node-gint.js";
 import { toPMTiles, lodThreshold } from "../src/convert/tiler.js";
 import { readPMTiles } from "../src/convert/pmtiles.js";
-import { decodeTile, signedArea2 } from "../src/convert/mvt.js";
+import { signedArea2 } from "../src/convert/mvt.js";
+import { decodeTile } from "../src/convert/mvt-decode.js";
 
 let fails = 0;
 const ok = (cond, msg) => { if (!cond) { console.error("✗", msg); fails++; } else console.log("✓", msg); };
@@ -40,7 +41,7 @@ ok(gint instanceof ArrayBuffer && gint.byteLength > 64, `gint を wasm で焼く
 // ---- 変換（CPU 明示）------------------------------------------------------------------
 const r = await toPMTiles(pbf, { gint, gpu: false, minZoom: 0, maxZoom: 9 });
 ok(r.stats.engine === "cpu" && r.buffer.length > 127, `toPMTiles: ${r.stats.tiles} タイル・${r.buffer.length} B・engine=${r.stats.engine}`);
-const pm = readPMTiles(r.buffer);
+const pm = await readPMTiles(r.buffer);
 const h = pm.header;
 ok(h.minZoom === 0 && h.maxZoom === 9 && h.tileType === 1 && h.tc === 2 && h.ic === 2 && h.clustered === 1, "ヘッダ: zoom/型/圧縮/clustered");
 ok(Math.abs(h.bounds[0] - 1) < 1e-6 && Math.abs(h.bounds[2] - 43) < 1e-6 && Math.abs(h.bounds[3] - 41) < 1e-6, `ヘッダ: bounds ${h.bounds.map(v => +v.toFixed(3))}`);
@@ -48,7 +49,7 @@ ok(pm.metadata.vector_layers?.[0]?.id === "fix" && pm.metadata.vector_layers[0].
 ok(h.addressed === r.stats.tiles && h.entries <= h.addressed && h.contents <= h.entries, `ディレクトリ: addressed ${h.addressed} ≥ entries ${h.entries} ≥ contents ${h.contents}`);
 
 // z0: 全 feature が 1 タイルに
-const t0 = decodeTile(pm.getTile(0, 0, 0))[0];
+const t0 = decodeTile(await pm.getTile(0, 0, 0))[0];
 ok(t0 && t0.name === "fix" && t0.features.length === 7, `z0: 7 feature（${t0?.features.length}）`);
 const byId = new Map(t0.features.map(f => [f.id, f]));
 ok(byId.get(0).type === 3 && byId.get(4).type === 2 && byId.get(5).type === 1 && byId.get(6).type === 1, "z0: 型（面/線/点/多点）");
@@ -62,7 +63,7 @@ const key = (p) => p[0] + "," + p[1];
 for (const z of [0, 3, 6, 9]) {
 	const n = 1 << z, tx = Math.floor((11 + 180) / 360 * n);
 	const y = (0.5 - Math.log(Math.tan(Math.PI / 4 + 10.5 * Math.PI / 360)) / (2 * Math.PI)) * n, ty = Math.floor(y);
-	const tile = pm.getTile(z, tx, ty);
+	const tile = await pm.getTile(z, tx, ty);
 	if (!tile) { ok(false, `z${z}: 境界タイル ${tx}/${ty} が無い`); continue; }
 	const l = decodeTile(tile)[0], a = l.features.find(f => f.id === 0), b = l.features.find(f => f.id === 1);
 	if (!a || !b) { ok(false, `z${z}: A/B が同じタイルに無い`); continue; }
@@ -76,8 +77,9 @@ for (const z of [0, 3, 6, 9]) {
 }
 // 簡略化: 低ズームでは共有辺の中間点が落ち、高ズームでは残る
 {
-	const cnt = (z) => { const n = 1 << z, tx = Math.floor((11 + 180) / 360 * n), ty = Math.floor((0.5 - Math.log(Math.tan(Math.PI / 4 + 10.5 * Math.PI / 360)) / (2 * Math.PI)) * n); const l = decodeTile(pm.getTile(z, tx, ty))[0]; return l.features.find(f => f.id === 0).geometry[0].length / 2; };
-	ok(cnt(0) < cnt(9), `LOD: A の頂点数 z0=${cnt(0)} < z9=${cnt(9)}`);
+	const cnt = async (z) => { const n = 1 << z, tx = Math.floor((11 + 180) / 360 * n), ty = Math.floor((0.5 - Math.log(Math.tan(Math.PI / 4 + 10.5 * Math.PI / 360)) / (2 * Math.PI)) * n); const l = decodeTile(await pm.getTile(z, tx, ty))[0]; return l.features.find(f => f.id === 0).geometry[0].length / 2; };
+	const c0 = await cnt(0), c9 = await cnt(9);
+	ok(c0 < c9, `LOD: A の頂点数 z0=${c0} < z9=${c9}`);
 }
 // 全面塗りタイルの畳み込み（H は 10°×10°＝z9 で数千タイル）
 ok(h.contents < h.entries && h.entries < h.addressed, `全面塗りタイルの重複畳み込み（contents ${h.contents} < entries ${h.entries} < addressed ${h.addressed}）`);
@@ -85,22 +87,22 @@ ok(pm.root.some(e => e.runLength > 1) || pm.root.some(e => e.runLength === 0), "
 // 内陸タイルの中身＝バッファ込みの矩形 1 つ
 {
 	const n = 1 << 9, tx = Math.floor((25 + 180) / 360 * n), ty = Math.floor((0.5 - Math.log(Math.tan(Math.PI / 4 + 21 * Math.PI / 360)) / (2 * Math.PI)) * n);
-	const l = decodeTile(pm.getTile(9, tx, ty))[0];
+	const l = decodeTile(await pm.getTile(9, tx, ty))[0];
 	ok(l.features.length === 1 && l.features[0].id === 2 && l.features[0].geometry.length === 1 && l.features[0].geometry[0].length === 8, "z9 内陸タイル: H の外環だけの矩形（穴の外）");
 	const tx2 = Math.floor((25 + 180) / 360 * n), ty2 = Math.floor((0.5 - Math.log(Math.tan(Math.PI / 4 + 25 * Math.PI / 360)) / (2 * Math.PI)) * n);
-	const l2 = decodeTile(pm.getTile(9, tx2, ty2))[0];
+	const l2 = decodeTile(await pm.getTile(9, tx2, ty2))[0];
 	ok(l2.features.length === 1 && l2.features[0].geometry.length === 2 && signedArea2(l2.features[0].geometry[1]) < 0, "z9 穴の内側タイル: 外環＋穴の 2 矩形（塗りは打ち消し）");
 }
 // 範囲外・空
-ok(pm.getTile(3, 0, 7) === null, "何も無いタイルは null");
+ok(await pm.getTile(3, 0, 7) === null, "何も無いタイルは null");
 // オプション検証
 let threw = false; try { await toPMTiles(pbf, { gint, gpu: false, extent: 1000 }); } catch { threw = true; } ok(threw, "extent が 2 の冪でなければ例外");
 threw = false; try { await toPMTiles(pbf, { gint, gpu: false, maxZoom: 21 }); } catch { threw = true; } ok(threw, "extent 4096 で maxZoom > 20 は例外");
 threw = false; try { await toPMTiles(pbf, { gpu: false }); } catch { threw = true; } ok(threw, "gint が無ければ例外");
 // extent 512 / 無圧縮
 const r2 = await toPMTiles(pbf, { gint, gpu: false, minZoom: 2, maxZoom: 4, extent: 512, tileCompression: "none", layer: "L2" });
-const pm2 = readPMTiles(r2.buffer);
-ok(pm2.header.tc === 1 && pm2.header.minZoom === 2 && decodeTile(pm2.getTile(2, 2, 1))[0].extent === 512 && decodeTile(pm2.getTile(2, 2, 1))[0].name === "L2", "extent 512・無圧縮・レイヤ名");
+const pm2 = await readPMTiles(r2.buffer);
+ok(pm2.header.tc === 1 && pm2.header.minZoom === 2 && decodeTile(await pm2.getTile(2, 2, 1))[0].extent === 512 && decodeTile(await pm2.getTile(2, 2, 1))[0].name === "L2", "extent 512・無圧縮・レイヤ名");
 
 // ---- CLI ---------------------------------------------------------------------------------
 const CLI = new URL("../bin/geopbf.mjs", import.meta.url).pathname, dir = mkdtempSync(join(tmpdir(), "geopbf-pmt-"));
@@ -108,11 +110,11 @@ const run = (...args) => execFileSync(process.execPath, [CLI, ...args], { encodi
 const inPath = join(dir, "fix.geopbf"); writeFileSync(inPath, gzipSync(Buffer.from(pbf.arrayBuffer)));
 const out = run("pmtiles", inPath, join(dir, "fix.pmtiles"), "--maxzoom", "5", "--no-gpu");
 ok(/タイル [\d,]+/.test(out) && /CPU/.test(out), "CLI pmtiles: 実行報告（タイル数・エンジン）");
-const cliPm = readPMTiles(new Uint8Array(readFileSync(join(dir, "fix.pmtiles"))));
-ok(cliPm.header.maxZoom === 5 && decodeTile(cliPm.getTile(0, 0, 0))[0].features.length === 7, "CLI pmtiles: 出力が読める（gzip GeoPBF 入力・gint はその場で焼く）");
+const cliPm = await readPMTiles(new Uint8Array(readFileSync(join(dir, "fix.pmtiles"))));
+ok(cliPm.header.maxZoom === 5 && decodeTile(await cliPm.getTile(0, 0, 0))[0].features.length === 7, "CLI pmtiles: 出力が読める（gzip GeoPBF 入力・gint はその場で焼く）");
 writeFileSync(join(dir, "fix.gint"), Buffer.from(gint));
 const out2 = run("pmtiles", inPath, join(dir, "fix2.pmtiles"), "--maxzoom", "3", "--gint", join(dir, "fix.gint"), "--layer", "cli");
-ok(/gint 読込/.test(out2) && decodeTile(readPMTiles(new Uint8Array(readFileSync(join(dir, "fix2.pmtiles")))).getTile(0, 0, 0))[0].name === "cli", "CLI pmtiles: --gint と --layer");
+ok(/gint 読込/.test(out2) && decodeTile(await (await readPMTiles(new Uint8Array(readFileSync(join(dir, "fix2.pmtiles"))))).getTile(0, 0, 0))[0].name === "cli", "CLI pmtiles: --gint と --layer");
 
 console.log(fails ? `\n${fails} 件失敗` : "\n全件通過");
 process.exit(fails ? 1 : 0);

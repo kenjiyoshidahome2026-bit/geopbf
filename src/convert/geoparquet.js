@@ -184,10 +184,8 @@ export async function toGeoParquet(pbf, opts = {}) {
 	const keyValue = { geo: JSON.stringify(geo) };
 	const meta = { name: pbf.name?.(), description: pbf.description?.(), license: pbf.license?.(), attribution: pbf.attribution?.() };
 	for (const k in meta) if (meta[k]) keyValue["geopbf:" + k] = meta[k];
-	let compress = opts.compress;
-	if (!compress && typeof process !== "undefined" && process.versions?.node) { try { const z = await import("node:zlib"); compress = (u8) => new Uint8Array(z.gzipSync(u8)); } catch {} }
 	const t3 = now();
-	const buffer = writeParquet({ schema, columns, numRows: pbf.length }, { rowGroupSize: opts.rowGroupSize, codec: opts.codec ?? "gzip", keyValue, createdBy: "geopbf", compress });
+	const buffer = await writeParquet({ schema, columns, numRows: pbf.length }, { rowGroupSize: opts.rowGroupSize, codec: opts.codec ?? "gzip", keyValue, createdBy: "geopbf", compress: opts.compress });
 	stats.ms.parquet = now() - t3; stats.ms.total = now() - t0; stats.bytes = buffer.length;
 	return { buffer, stats, geo };
 }

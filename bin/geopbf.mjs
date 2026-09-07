@@ -30,6 +30,7 @@ const USAGE = `geopbf <command>
        [--layer name]               レイヤ名（既定＝ヘッダの name）
        [--gint <in.gint>]           焼き済み GintBUF を使う（無ければ wasm でその場で焼く）
        [--gpu | --no-gpu]           WebGPU（Node は npm の webgpu＝Dawn が要る）。既定＝あれば使う
+       [--workers N]                組立/クリップ/MVT/gzip の worker 数（既定＝コア数-1・0＝単一スレッド）
   parquet <in.geopbf> <out.parquet>  GeoPBF を GeoParquet（WKB・bbox 列・gzip）へ
        [--compression gzip|none] [--row-group N] [--gpu | --no-gpu]
 
@@ -261,7 +262,7 @@ const engineNote = (st) => st.engine === "gpu" ? `GPU ${[st.gpu?.vendor, st.gpu?
 
 async function pmtiles(argv) {
 	const { toPMTiles } = await import("../src/convert/tiler.js");
-	const { pos: [inPath, outPath], opts } = parseArgs(argv, ["minzoom", "maxzoom", "extent", "buffer", "layer", "gint", "lod-bias"]);
+	const { pos: [inPath, outPath], opts } = parseArgs(argv, ["minzoom", "maxzoom", "extent", "buffer", "layer", "gint", "lod-bias", "workers"]);
 	if (!inPath || !outPath) throw new Error("pmtiles <in.geopbf> <out.pmtiles>");
 	const t0 = Date.now();
 	const pbf = await openPbf(inPath);
@@ -274,11 +275,11 @@ async function pmtiles(argv) {
 	const r = await toPMTiles(pbf, { gint, gpu: wantGpu,
 		minZoom: opts.minzoom !== undefined ? +opts.minzoom : 0, maxZoom: opts.maxzoom !== undefined ? +opts.maxzoom : 14,
 		extent: opts.extent ? +opts.extent : undefined, buffer: opts.buffer !== undefined ? +opts.buffer : undefined,
-		layer: opts.layer, lodBias: opts["lod-bias"] !== undefined ? +opts["lod-bias"] : undefined });
+		layer: opts.layer, lodBias: opts["lod-bias"] !== undefined ? +opts["lod-bias"] : undefined, workers: opts.workers !== undefined ? +opts.workers : undefined });
 	await writeFile(outPath, r.buffer);
 	const s = r.stats;
 	console.log(`${inPath}  features ${num(pbf.length)}  gint ${opts.gint ? "読込" : "焼き"} ${t1 - t0} ms（arc ${num(s.arcs)}・頂点 ${num(s.vertices)}）`);
-	console.log(`${outPath}  ${mb(s.bytes)}  タイル ${num(s.tiles)}  z${r.metadata.minzoom}-${r.metadata.maxzoom}  ${engineNote(s)}`);
+	console.log(`${outPath}  ${mb(s.bytes)}  タイル ${num(s.tiles)}（内容 ${num(s.contents)} 種）  z${r.metadata.minzoom}-${r.metadata.maxzoom}  ${engineNote(s)}・worker ${s.workers}`);
 	console.log(`  投影+LOD ${s.ms.project_lod.toFixed(0)} ms・書き出し ${s.ms.lod_write.toFixed(0)} ms・組立/クリップ/MVT ${s.ms.assemble.toFixed(0)} ms・PMTiles ${s.ms.pmtiles.toFixed(0)} ms・合計 ${s.ms.total.toFixed(0)} ms  （残存頂点 ${num(s.kept)}＝全ズーム合計）`);
 }
 

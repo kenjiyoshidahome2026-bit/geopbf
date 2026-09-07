@@ -185,9 +185,9 @@ Builds a PMTiles v3 archive of Mapbox Vector Tiles from a GeoPBF and its Gint. R
 * **`minZoom`** (0) / **`maxZoom`** (14): zoom range. `maxZoom ≤ 32 − log2(extent)` (20 for extent 4096).
 * **`extent`** (4096, power of two) / **`buffer`** (80, tile units): MVT grid and clip buffer.
 * **`layer`**: layer name (default: header `name`). **`lodBias`** (0): added to the rank threshold `63 − 3·(z + log2(extent/256))`; positive keeps fewer vertices.
-* **`tileCompression`** (`"gzip"` | `"none"`), **`compress`** (function replacing gzip), **`metadata`** (merged into the PMTiles JSON), **`center`**, **`batchVertices`** (32M: read-back batch size), **`onProgress({ zoom, tiles })`**.
+* **`tileCompression`** (`"gzip"` | `"none"`), **`workers`** (default cores−1, max 8; `0` = inline), **`metadata`** (merged into the PMTiles JSON), **`center`**, **`batchVertices`** (32M: read-back batch size), **`onProgress({ zoom, tiles })`**, **`onWarn(err)`** (worker pool unavailable → inline).
 * **`gpu`**: `false` → CPU; a `GPU` object → use it; omitted → `navigator.gpu` or, in Node, the optional `webgpu` package.
-* `stats`: `{ engine, gpu, vertices, arcs, kept, tiles, bytes, ms: { project_lod, lod_write, assemble, pmtiles, total } }`.
+* `stats`: `{ engine, gpu, workers, vertices, arcs, kept, tiles, contents, bytes, ms: { project_lod, lod_write, assemble, pmtiles, total } }`.
 * Semantics: one layer, feature `id` = feature index (fid), polygons follow MVT 2.1 winding (outer positive / holes negative area), shared borders are simplified identically on both sides (one arc), interior full-cover tiles are de-duplicated (content hash + run length).
 
 ### `await toGeoParquet(pbf, [options])` (`geopbf/geoparquet`)
@@ -196,10 +196,10 @@ Writes GeoParquet 1.1: `geometry` (WKB, little-endian), an optional `bbox` struc
 * Coordinates are the GeoPBF integers divided by `10^precision`, converted to doubles exactly (same bits as JavaScript division). Empty geometries become nulls. Header fields travel as `geopbf:name/description/license/attribution` key-values.
 
 ### Lower-level pieces (`geopbf/convert`)
-`getDevice()` / `setGPU(gpu)` / `findGPU()` — device acquisition; `createEngine(device)` / `cpuEngine()` — the kernel contract (`project`, `lodCount`, `lodWrite`, `wkb`, `bbox`); `writePMTiles(tiles, metadata, opts)` / `readPMTiles(u8)` / `zxyToTileId` / `tileIdToZxy`; `encodeTile(layer)` / `decodeTile(u8)` (MVT); `writeParquet({ schema, columns, numRows }, opts)` (generic Parquet writer).
+`getDevice()` / `setGPU(gpu)` / `findGPU()` — device acquisition; `createEngine(device)` / `cpuEngine()` — the kernel contract (`project`, `lodCount`, `lodWrite`, `wkb`, `bbox`); `await writePMTiles(tiles, metadata, opts)` / `await assemblePMTiles(items, contents, metadata, opts)` / `await readPMTiles(u8)` (async `getTile`) / `zxyToTileId` / `tileIdToZxy`; `encodeTile(layer)` (MVT, dependency-free) / `decodeTile(u8)` (test decoder, `geopbf/convert` only); `await writeParquet({ schema, columns, numRows }, opts)`; `gzip(u8)` / `gunzip(u8)` (zlib in Node, `CompressionStream` elsewhere).
 
 ### CLI
-`geopbf pmtiles <in.geopbf> <out.pmtiles> [--minzoom N] [--maxzoom N] [--extent N] [--buffer N] [--layer name] [--gint in.gint] [--lod-bias N] [--gpu | --no-gpu]`
+`geopbf pmtiles <in.geopbf> <out.pmtiles> [--minzoom N] [--maxzoom N] [--extent N] [--buffer N] [--layer name] [--gint in.gint] [--lod-bias N] [--workers N] [--gpu | --no-gpu]`
 `geopbf parquet <in.geopbf> <out.parquet> [--compression gzip|none] [--row-group N] [--gpu | --no-gpu]`
 
 ### Verification

@@ -19,7 +19,8 @@ for (const c of ["playwright", "playwright-core", "/opt/node22/lib/node_modules/
 if (!pw) { console.error("playwright が見つからない（npm i -g playwright）"); process.exit(2); }
 
 const bi = process.argv.indexOf("--bench");
-const bench = bi > 0 ? { dir: path.resolve(process.argv[bi + 1]), name: process.argv[bi + 2], maxzoom: process.argv.includes("--maxzoom") ? process.argv[process.argv.indexOf("--maxzoom") + 1] : "8" } : null;
+const bench = bi > 0 ? { dir: path.resolve(process.argv[bi + 1]), name: process.argv[bi + 2], maxzoom: process.argv.includes("--maxzoom") ? process.argv[process.argv.indexOf("--maxzoom") + 1] : "8",
+	extra: (process.argv.includes("--nogzip") ? "&nogzip=1" : "") + (process.argv.includes("--workers") ? "&workers=" + process.argv[process.argv.indexOf("--workers") + 1] : "") } : null;
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".wasm": "application/wasm", ".json": "application/json" };
 const srv = http.createServer(async (q, s) => {
 	try {
@@ -42,7 +43,7 @@ const browser = await pw.chromium.launch({
 const page = await browser.newPage();
 page.on("console", m => { if (m.type() === "error" && !/404/.test(m.text())) console.error("[page]", m.text()); else if (bench && m.text().startsWith("[bench]")) console.log(m.text()); });
 page.on("pageerror", e => console.error("[pageerror]", e.message));
-await page.goto(bench ? `http://localhost:${port}/tests/t-convert-bench.html?data=${encodeURIComponent(bench.name)}&maxzoom=${bench.maxzoom}` : `http://localhost:${port}/tests/t-convert-gpu.html`);
+await page.goto(bench ? `http://localhost:${port}/tests/t-convert-bench.html?data=${encodeURIComponent(bench.name)}&maxzoom=${bench.maxzoom}${bench.extra}` : `http://localhost:${port}/tests/t-convert-gpu.html`);
 await page.waitForFunction(() => window.__result, null, { timeout: 1800000 });
 const r = await page.evaluate(() => window.__result);
 await browser.close(); srv.close();

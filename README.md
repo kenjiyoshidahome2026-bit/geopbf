@@ -91,9 +91,12 @@ neighbouring polygons are simplified to the *identical* vertex list. No slivers,
 1. `project` — Morton decode → fixed-point Web Mercator `X32/Y32` (32-bit, whole world). Once per vertex, not per zoom.
 2. `lod` — one dispatch over `(arc × zoom)`: keep `rank >= threshold`, shift to tile space, drop consecutive
    duplicates, write compacted coordinates (count pass + write pass). All zooms in a single round trip.
-3. CPU: rings/lines are stitched from the arcs (`polyStream`/`lineStream`), bisected into tiles with buffer,
-   encoded as MVT, gzipped, and packed into PMTiles v3 (Hilbert tile ids, run-length + content de-duplication
-   for interior tiles, leaf directories when the root exceeds 16 KB).
+3. Worker pool (browser `Worker` / Node `worker_threads`, one code path): each `(zoom × tile-column range)` job
+   stitches rings/lines from the arcs (`polyStream`/`lineStream`), bisects them into tiles with buffer, encodes
+   MVT, gzips and content-hashes its tiles. The main thread merges by content key and packs PMTiles v3 (Hilbert
+   tile ids, run-length + content de-duplication for interior tiles, leaf directories when the root exceeds 16 KB).
+   Sharding only prunes the bisection tree, so the output is byte-identical with any worker count (`workers: 0`
+   runs inline).
 
 GeoParquet takes the GeoPBF integers directly (no Gint round-trip, so coordinates are exactly the file's values):
 the GPU converts `i / 10^precision` to IEEE-754 doubles by long division with round-to-nearest-even — bit-identical
@@ -106,11 +109,17 @@ with an exact slope column (error ≤ 3 units of 2⁻³²), longitude uses exact
 so the GPU output is not "close to" the CPU output, it is byte-identical, and `scripts/verify-convert-gpu.mjs`
 proves it on every kernel through headless Chromium (works on SwiftShader, so it runs in CI without a GPU).
 
+Compression is one code path with no pako: Node uses `zlib` natively, browsers use `CompressionStream` driven
+through its writer/reader directly (≈4× cheaper per tile than the `Blob`→`Response` idiom). Measured on Natural Earth
+10m countries (258 polygons, 480k vertices), z0–10 = 575,559 tiles / 152 MB: 12 s on a 4-core Node with 3 workers
+(31 s single-threaded); in Chromium z0–8 takes ≈8 s with 3 workers. The GPU stage itself is ≈150 ms of that on a
+software adapter (SwiftShader) — real-GPU numbers were not measurable in the CI container.
+
 Where the GPU is not: Node has no `navigator.gpu`. `npm i webgpu` (Dawn) gives the CLI a real adapter; without it,
 `--gpu` reports the fallback and runs the CPU path — same bytes out. Deno's built-in WebGPU works as is. In the
 browser everything is automatic.
 
-Options — `toPMTiles(pbf, { gint, minZoom=0, maxZoom=14, extent=4096, buffer=80, layer, lodBias=0, tileCompression:"gzip", gpu, onProgress })`,
+Options — `toPMTiles(pbf, { gint, minZoom=0, maxZoom=14, extent=4096, buffer=80, layer, lodBias=0, tileCompression:"gzip", gpu, workers, onProgress })`,
 `toGeoParquet(pbf, { codec:"gzip"|"none", rowGroupSize=65536, bboxColumn=true, geometryName="geometry", gpu })`.
 `gpu: false` forces CPU; a `GPU` object (e.g. from the `webgpu` package) can be passed as `gpu`.
 

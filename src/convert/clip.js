@@ -80,14 +80,16 @@ export function bboxOf(parts, kind) {
 }
 
 // タイル範囲 → 各タイルへ切り出して sink(tx, ty, parts) へ。extent=タイル一辺、buffer=はみ出し幅（同単位）。
-// bbox は parts の外接（既知なら渡す）。z はタイル数の上限（2^z）に使う。
-export function splitToTiles(parts, kind, bbox, z, extent, buffer, sink) {
-	const nmax = 2 ** z - 1;
+// bbox は parts の外接（既知なら渡す）。z はタイル数の上限（2^z）に使う。txRange=[from,to] で列範囲を絞る（worker 分担）。
+export function splitToTiles(parts, kind, bbox, z, extent, buffer, sink, txRange = null) {
+	const nmax = 2 ** z - 1, txLo = txRange ? txRange[0] : 0, txHi = txRange ? txRange[1] : nmax;
 	const clampi = (v) => v < 0 ? 0 : v > nmax ? nmax : v;
+	// ⚠ 列範囲は「二分の木を枝刈りする」だけで、範囲の計算や分割点は変えない＝分担の有無で葉の結果が bit 同一
+	//（範囲を先に絞ると分割点がずれ、同じタイルの切片が変わって分担境界で別物になる）
 	const range = (bb) => [clampi(Math.ceil((bb[0] - buffer) / extent) - 1), clampi(Math.floor((bb[2] + buffer) / extent)),
 		clampi(Math.ceil((bb[1] - buffer) / extent) - 1), clampi(Math.floor((bb[3] + buffer) / extent))];
 	const rec = (pts, bb, tx0, tx1, ty0, ty1) => {
-		if (tx0 > tx1 || ty0 > ty1) return;
+		if (tx0 > tx1 || ty0 > ty1 || tx1 < txLo || tx0 > txHi) return;
 		if (tx0 === tx1 && ty0 === ty1) {
 			const x0 = tx0 * extent - buffer, x1 = (tx0 + 1) * extent + buffer, y0 = ty0 * extent - buffer, y1 = (ty0 + 1) * extent + buffer;
 			let c = pts;
@@ -101,8 +103,10 @@ export function splitToTiles(parts, kind, bbox, z, extent, buffer, sink) {
 		const ax = (tx1 - tx0) >= (ty1 - ty0) ? 0 : 1;
 		const lo = ax === 0 ? tx0 : ty0, hi = ax === 0 ? tx1 : ty1, m = (lo + hi) >> 1, edge = (m + 1) * extent;
 		const bmax = ax === 0 ? bb[2] : bb[3], bmin = ax === 0 ? bb[0] : bb[1];
-		const left = bmax <= edge + buffer ? pts : clipHalf(pts, kind, ax, edge + buffer, true);
-		const right = bmin >= edge - buffer ? pts : clipHalf(pts, kind, ax, edge - buffer, false);
+		// 左（下）半分が列範囲の外なら切片も作らない（枝刈り＝分割点は不変）
+		const wantL = ax === 0 ? lo <= txHi && m >= txLo : true, wantR = ax === 0 ? m + 1 <= txHi && hi >= txLo : true;
+		const left = !wantL ? null : bmax <= edge + buffer ? pts : clipHalf(pts, kind, ax, edge + buffer, true);
+		const right = !wantR ? null : bmin >= edge - buffer ? pts : clipHalf(pts, kind, ax, edge - buffer, false);
 		if (left) {
 			const lb = left === pts ? bb : bboxOf(left, kind), r = range(lb);
 			ax === 0 ? rec(left, lb, Math.max(tx0, r[0]), Math.min(m, r[1]), Math.max(ty0, r[2]), Math.min(ty1, r[3]))

@@ -6,7 +6,8 @@
 import { lonToX32, latToY32, mercTable, decodeGint, LON_FULL, LAT_FULL } from "../src/convert/merc.js";
 import { projectCPU, lodCPU, wkbCPU, bboxCPU } from "../src/convert/kernels.js";
 import { clipRingHalf, clipLineHalf, splitToTiles } from "../src/convert/clip.js";
-import { encodeTile, decodeTile, signedArea2 } from "../src/convert/mvt.js";
+import { encodeTile, signedArea2 } from "../src/convert/mvt.js";
+import { decodeTile } from "../src/convert/mvt-decode.js";
 import { zxyToTileId, tileIdToZxy, serializeDirectory, deserializeDirectory } from "../src/convert/pmtiles.js";
 
 let fails = 0;

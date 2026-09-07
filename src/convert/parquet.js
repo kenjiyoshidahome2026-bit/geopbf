@@ -4,7 +4,7 @@
 //
 // 対応する列型: BOOLEAN / INT64 / DOUBLE / BYTE_ARRAY（UTF8・JSON・生バイト）。
 // スキーマは depth-first の SchemaElement 列で受ける（GeoParquet の bbox = optional group { required double ×4 }）。
-import pako from "pako";
+import { gzip } from "./gzip.js";
 
 // ── Thrift compact protocol ──
 const CT = { BOOL_TRUE: 1, BOOL_FALSE: 2, BYTE: 3, I16: 4, I32: 5, I64: 6, DOUBLE: 7, BINARY: 8, LIST: 9, SET: 10, MAP: 11, STRUCT: 12 };
@@ -76,12 +76,12 @@ function encodeValues(type, vals) {
 const le8 = (v) => { const u = new Uint8Array(8); new DataView(u.buffer).setFloat64(0, v, true); return u; };
 
 // columns: [{ path: ["a"] | ["bbox","xmin"], type: PT.*, get(row) → 値 | null, stats?: true（DOUBLE の min/max）}]
-// opts: { rowGroupSize=65536, codec:"gzip"|"none", keyValue: {k: v}, createdBy, compress?: (u8)=>u8 }
-export function writeParquet({ schema, columns, numRows }, opts = {}) {
+// opts: { rowGroupSize=65536, codec:"gzip"|"none", keyValue: {k: v}, createdBy, compress?: async (u8)=>u8 }
+export async function writeParquet({ schema, columns, numRows }, opts = {}) {
 	const rowGroupSize = opts.rowGroupSize ?? 65536, codecName = opts.codec ?? "gzip", codec = CODEC[codecName];
 	if (codec === undefined || codec === 1) throw new Error("parquet: codec は gzip か none");
-	const gz = opts.compress ?? ((u8) => pako.gzip(u8));
-	const compress = (u8) => codec === 2 ? gz(u8) : u8;
+	const gz = opts.compress ?? gzip;
+	const compress = async (u8) => codec === 2 ? gz(u8) : u8;
 	const parts = [new Uint8Array([0x50, 0x41, 0x52, 0x31])];   // "PAR1"
 	let fileOff = 4;
 	const rowGroups = [];
@@ -99,7 +99,7 @@ export function writeParquet({ schema, columns, numRows }, opts = {}) {
 			}
 			const lv = encodeDefLevels(levels), vb = encodeValues(col.type, vals);
 			const raw = new Uint8Array(lv.length + vb.length); raw.set(lv, 0); raw.set(vb, lv.length);
-			const comp = compress(raw);
+			const comp = await compress(raw);
 			// PageHeader
 			const ph = new TWriter(64);
 			ph.structBegin();

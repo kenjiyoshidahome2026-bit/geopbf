@@ -7,13 +7,15 @@
 // ズーム z の閾値は ortho-core の r=63-3z（256px 世界）を extent へ換算した 63-3(z+log2(extent/256))。
 //
 // 流れ: unpack → ①project（GPU/CPU）→ ②lodCount（全ズーム 1 dispatch）→ prefix sum → ②lodWrite（出力量で
-// ズームを束ねて読み戻し）→ ズーム毎に CPU で環/線を組み立て → 二分クリップ → MVT → gzip → PMTiles。
+// ズームを束ねて読み戻し）→ ズーム×タイル列範囲の job を worker プールへ（環/線の組立・二分クリップ・MVT・gzip・
+// 内容キー）→ main で内容を寄せて PMTiles。gzip は Node=zlib / ブラウザ=CompressionStream（pako 不使用）。
 import { unPackGintBuffer } from "../extension/topology.js";
 import { getDevice } from "./gpu.js";
 import { createEngine, cpuEngine } from "./engine.js";
-import { splitToTiles } from "./clip.js";
-import { encodeTile, signedArea2 } from "./mvt.js";
-import { writePMTiles } from "./pmtiles.js";
+import { assembleZoom } from "./assemble.js";
+import { createPool, defaultWorkers } from "./pool.js";
+import { gzipMany } from "./gzip.js";
+import { assemblePMTiles, sameBytes } from "./pmtiles.js";
 
 export function lodThreshold(z, extent, lodBias = 0) {
 	const v = Math.round(63 - 3 * (z + Math.log2(extent / 256)) - lodBias);
@@ -45,6 +47,7 @@ export function propsToTags(props, fields) {
 }
 
 // pbf: GeoPBF（属性・ヘッダ用）。opts.gint: GintBUF（ArrayBuffer）。無ければ pbf._gintBuffer（pbf.gint() 後）。
+// opts.workers: worker 数（0＝インライン・既定＝コア数-1・最大 8）
 export async function toPMTiles(pbf, opts = {}) {
 	const t0 = now();
 	const gintBuf = opts.gint ?? pbf._gintBuffer;
@@ -57,7 +60,8 @@ export async function toPMTiles(pbf, opts = {}) {
 	if (!(minZoom >= 0 && maxZoom >= minZoom && maxZoom <= 32 - extentShift && maxZoom - minZoom < 32)) throw new Error(`zoom 範囲が不正（0 ≤ min ≤ max ≤ ${32 - extentShift}）`);
 	const buffer = opts.buffer ?? 80, lodBias = opts.lodBias ?? 0;
 	const layerName = opts.layer ?? pbf.name?.() ?? "layer";
-	const stats = { engine: "cpu", vertices: 0, arcs: 0, kept: 0, tiles: 0, bytes: 0, ms: {} };
+	const tileGzip = (opts.tileCompression ?? "gzip") === "gzip";
+	const stats = { engine: "cpu", vertices: 0, arcs: 0, kept: 0, tiles: 0, bytes: 0, workers: 0, ms: {} };
 
 	// ── 頂点台帳: arc 群 ＋ 点（点は長さ 1 の arc として同じ経路を通す）
 	const arcU32 = d.arcBuffer ? new Uint32Array(d.arcBuffer.buffer, d.arcBuffer.byteOffset, d.arcBuffer.length * 2) : new Uint32Array(0);
@@ -69,7 +73,7 @@ export async function toPMTiles(pbf, opts = {}) {
 	for (let p = 0; p < nPts; p++) { arcs[(d.arcCount + p) * 2] = arcLen + p; arcs[(d.arcCount + p) * 2 + 1] = 1; }
 	stats.vertices = arcLen + nPts; stats.arcs = d.arcCount;
 
-	// ── エンジン
+	// ── エンジン（GPU/CPU）
 	let device = null;
 	if (opts.gpu !== false) device = await getDevice(typeof opts.gpu === "object" ? { gpu: opts.gpu } : {});
 	const eng = device ? createEngine(device) : cpuEngine();
@@ -81,21 +85,42 @@ export async function toPMTiles(pbf, opts = {}) {
 	const params = { arcCount: A, zoomCount, minZoom, extentShift, thresholds };
 	const { counts, bbox } = await eng.lodCount(proj, arcs, params);
 	stats.ms.project_lod = now() - t1;
-	// prefix sum（全ズーム通し）
 	const offsets = new Uint32Array(counts.length);
 	let total = 0; for (let i = 0; i < counts.length; i++) { offsets[i] = total; total += counts[i]; }
 	stats.kept = total;
 	const zoomTotal = (k) => (k + 1 < zoomCount ? offsets[(k + 1) * A] : total) - offsets[k * A];
 
-	// ── 属性 → tags（fid 毎に 1 回）
+	// ── 属性 → tags（fid 毎に 1 回・worker へは配列で 1 回送る）
 	const fields = new Map();
-	const tagCache = new Array(pbf.length);
-	const tagsOf = (fid) => tagCache[fid] ??= propsToTags(pbf.getProperties(fid), fields);
+	const tags = new Array(pbf.length);
+	for (let i = 0; i < pbf.length; i++) tags[i] = propsToTags(pbf.getProperties(i), fields);
+	const S = { arcCount: d.arcCount, nPts, point: d.point ? d.point.slice() : null, polyStream: d.polyStream ? d.polyStream.slice() : null, lineStream: d.lineStream ? d.lineStream.slice() : null, extent, buffer, layerName, tags };
 
-	// ── ズーム毎の組立
-	const tiles = [];
-	const batchVerts = opts.batchVertices ?? (32 << 20);   // lodWrite 1 回の読み戻し上限（頂点数・8B/頂点）
+	// ── worker プール（失敗したらインライン）
+	let pool = null;
+	const NW = opts.workers ?? await defaultWorkers();
+	if (NW > 0) { try { pool = await createPool(NW); await pool.init(S); } catch (e) { pool = null; opts.onWarn?.(e); } }
+	stats.workers = pool ? NW : 0;
+
+	// ── 結果の寄せ集め（内容キーで重複統合・同キー異内容は枝番）
+	const items = [], contents = new Map();
+	let tileCount = 0;
+	const merge = (r) => {
+		const remap = new Map();
+		for (const [key0, bytes] of r.contents) {
+			let key = key0, n = 0, cur = contents.get(key);
+			while (cur && !sameBytes(cur, bytes)) { key = key0 + "~" + (++n); cur = contents.get(key); }
+			if (!cur) contents.set(key, bytes);
+			if (key !== key0) remap.set(key0, key);
+		}
+		for (const t of r.tiles) items.push({ id: t.id, key: remap.get(t.key) ?? t.key });
+		tileCount += r.tiles.length;
+	};
+
+	// ── ズーム毎の job（GPU 読み戻しはズームを束ねて・組立は列範囲で分担）
+	const batchVerts = opts.batchVertices ?? (32 << 20);
 	let tAsm = 0, tLod2 = 0;
+	const pending = [];
 	for (let k0 = 0; k0 < zoomCount;) {
 		let k1 = k0 + 1, sum = zoomTotal(k0);
 		while (k1 < zoomCount && sum + zoomTotal(k1) <= batchVerts) sum += zoomTotal(k1++);
@@ -106,107 +131,33 @@ export async function toPMTiles(pbf, opts = {}) {
 		tLod2 += now() - tw;
 		const ta = now();
 		for (let k = k0; k < k1; k++) {
-			const z = minZoom + k;
-			const slotBase = (k - k0) * A, slotAbs = k * A;
-			const pt = (slot, i) => [out[(sub[slot - slotAbs + slotBase] + i) * 2], out[(sub[slot - slotAbs + slotBase] + i) * 2 + 1]];
-			const cnt = (slot) => counts[slot];
-			const tileMap = new Map();
-			const tileOf = (tx, ty) => { const key = tx * 4294967296 + ty; let t = tileMap.get(key); if (!t) { t = { tx, ty, polys: new Map(), lines: new Map(), points: new Map() }; tileMap.set(key, t); } return t; };
-			const concat = (arcIdxs, ring) => {
-				const line = [];
-				let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
-				for (const ai of arcIdxs) {
-					const aid = ai < 0 ? ~ai : ai, slot = slotAbs + aid, n = cnt(slot);
-					if (!n) continue;
-					const b = slot * 4;
-					if (bbox[b] < bx0) bx0 = bbox[b]; if (bbox[b + 1] < by0) by0 = bbox[b + 1]; if (bbox[b + 2] > bx1) bx1 = bbox[b + 2]; if (bbox[b + 3] > by1) by1 = bbox[b + 3];
-					const o = sub[slot - slotAbs + slotBase];
-					for (let j = 0; j < n; j++) {
-						const i = ai < 0 ? n - 1 - j : j, x = out[(o + i) * 2], y = out[(o + i) * 2 + 1], m = line.length;
-						if (m && line[m - 2] === x && line[m - 1] === y) continue;
-						line.push(x, y);
-					}
-				}
-				if (ring) { const m = line.length; if (m >= 4 && line[0] === line[m - 2] && line[1] === line[m - 1]) line.length = m - 2; }
-				return { line, bbox: [bx0, by0, bx1, by1] };
-			};
-			// ポリゴン
-			const ps = d.polyStream;
-			if (ps) for (let p = 0; p < ps.length;) {
-				const fid = ps[p++], nr = ps[p++], rings = [];
-				let bb = null;
-				for (let r = 0; r < nr; r++) {
-					const ac = ps[p++], idx = ps.subarray(p, p + ac); p += ac;
-					const { line, bbox: rb } = concat(idx, true);
-					if (line.length < 6) { if (r === 0) break; continue; }
-					const a2 = signedArea2(line);
-					if (a2 === 0) { if (r === 0) break; continue; }
-					if ((r === 0) !== (a2 > 0)) { const rev = []; for (let i = line.length - 2; i >= 0; i -= 2) rev.push(line[i], line[i + 1]); rings.push(rev); } else rings.push(line);
-					if (r === 0) bb = rb; else { if (rb[0] < bb[0]) bb[0] = rb[0]; if (rb[1] < bb[1]) bb[1] = rb[1]; if (rb[2] > bb[2]) bb[2] = rb[2]; if (rb[3] > bb[3]) bb[3] = rb[3]; }
-				}
-				if (!rings.length) continue;
-				splitToTiles(rings, 2, bb, z, extent, buffer, (tx, ty, parts) => { const t = tileOf(tx, ty); let l = t.polys.get(fid); if (!l) t.polys.set(fid, l = []); l.push(parts); });
-			}
-			// 線
-			const ls = d.lineStream;
-			if (ls) for (let p = 0; p < ls.length;) {
-				const fid = ls[p++], ns = ls[p++];
-				for (let s = 0; s < ns; s++) {
-					const ac = ls[p++], idx = ls.subarray(p, p + ac); p += ac;
-					const { line, bbox: lb } = concat(idx, false);
-					if (line.length < 4) continue;
-					splitToTiles([line], 1, lb, z, extent, buffer, (tx, ty, parts) => { const t = tileOf(tx, ty); let l = t.lines.get(fid); if (!l) t.lines.set(fid, l = []); for (const q of parts) l.push(q); });
+			const z = minZoom + k, ntx = 1 << z;
+			const zc = counts.subarray(k * A, (k + 1) * A), zb = bbox.subarray(k * A * 4, (k + 1) * A * 4);
+			const zo = sub.subarray((k - k0) * A, (k - k0 + 1) * A), zStart = zo[0], zEnd = (k - k0 + 1 < k1 - k0 ? sub[(k - k0 + 1) * A] : sum);
+			const shards = Math.max(1, Math.min(ntx, pool ? pool.size * 3 : 1));
+			for (let s = 0; s < shards; s++) {
+				const txFrom = Math.floor(ntx * s / shards), txTo = Math.floor(ntx * (s + 1) / shards) - 1;
+				const makeJob = () => {   // worker が空いた時に複製を作る＝同時に NW 個まで
+					const offs = zo.slice(); for (let i = 0; i < offs.length; i++) offs[i] -= zStart;
+					const o = out.slice(zStart * 2, zEnd * 2);
+					const J = { z, txFrom, txTo, counts: zc.slice(), bbox: zb.slice(), offs, out: o };
+					return { msg: { type: "job", J, gzip: tileGzip }, transfers: [J.counts.buffer, J.bbox.buffer, offs.buffer, o.buffer] };
+				};
+				if (pool) pending.push(pool.run(makeJob).then(r => { merge(r); opts.onProgress?.({ zoom: z, tiles: tileCount }); }));
+				else {
+					const J = makeJob().msg.J, r = assembleZoom(S, J);
+					const bytes = tileGzip ? await gzipMany(r.contents.map(c => c[1])) : r.contents.map(c => c[1]);
+					merge({ tiles: r.tiles, contents: r.contents.map((c, i) => [c[0], bytes[i]]) });
+					opts.onProgress?.({ zoom: z, tiles: tileCount });
 				}
 			}
-			// 点（fid 毎に束ねて MultiPoint）
-			if (nPts) {
-				const byFid = new Map();
-				for (let i = 0; i < nPts; i++) { const slot = slotAbs + d.arcCount + i; if (!cnt(slot)) continue; const [x, y] = pt(slot, 0); const fid = d.point[i]; let l = byFid.get(fid); if (!l) byFid.set(fid, l = []); l.push(x, y); }
-				for (const [fid, pts] of byFid) {
-					let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
-					for (let i = 0; i < pts.length; i += 2) { if (pts[i] < bx0) bx0 = pts[i]; if (pts[i] > bx1) bx1 = pts[i]; if (pts[i + 1] < by0) by0 = pts[i + 1]; if (pts[i + 1] > by1) by1 = pts[i + 1]; }
-					splitToTiles(pts, 0, [bx0, by0, bx1, by1], z, extent, buffer, (tx, ty, parts) => { const t = tileOf(tx, ty); const l = t.points.get(fid); if (l) l.push(...parts); else t.points.set(fid, parts.slice()); });
-				}
-			}
-			// ── タイル → MVT
-			// 内陸の「全面塗り」タイル（1 feature・4 隅の矩形だけ）は fid 毎に 1 回だけ符号化して使い回す＝面被覆データでは
-			// 高ズームのタイルの大半がこれ（PMTiles 側の内容重複畳み込みと対＝符号化もしない）。
-			const fullCache = new Map();
-			const lo = -buffer, hi = extent + buffer;
-			const isFullSquare = (rings) => {
-				if (rings.length !== 1 || rings[0].length !== 8) return false;
-				const r = rings[0]; let c = 0;
-				for (let i = 0; i < 8; i += 2) { const x = r[i], y = r[i + 1]; if ((x === lo || x === hi) && (y === lo || y === hi)) c++; }
-				return c === 4 && !(r[0] === r[2] && r[1] === r[3]) && !(r[0] === r[4] && r[1] === r[5]);
-			};
-			for (const t of tileMap.values()) {
-				const ox = t.tx * extent, oy = t.ty * extent, features = [];
-				const local = (a) => { const o = new Array(a.length); for (let i = 0; i < a.length; i += 2) { o[i] = Math.round(a[i] - ox); o[i + 1] = Math.round(a[i + 1] - oy); } return o; };
-				if (t.polys.size === 1 && !t.lines.size && !t.points.size) {
-					const [fid, polys] = t.polys.entries().next().value;
-					if (polys.length === 1) {
-						const rings = polys[0].map(local);
-						if (isFullSquare(rings)) {
-							let data = fullCache.get(fid);
-							if (!data) { data = encodeTile({ name: layerName, extent, features: [{ id: fid, type: 3, tags: tagsOf(fid), geometry: [rings] }] }); fullCache.set(fid, data); }
-							tiles.push({ z, x: t.tx, y: t.ty, data });
-							continue;
-						}
-					}
-				}
-				for (const [fid, polys] of t.polys) features.push({ id: fid, type: 3, tags: tagsOf(fid), geometry: polys.map(rings => rings.map(local)) });
-				for (const [fid, lines] of t.lines) features.push({ id: fid, type: 2, tags: tagsOf(fid), geometry: lines.map(local) });
-				for (const [fid, pts] of t.points) features.push({ id: fid, type: 1, tags: tagsOf(fid), geometry: local(pts) });
-				const data = encodeTile({ name: layerName, extent, features });
-				tiles.push({ z, x: t.tx, y: t.ty, data });
-			}
-			opts.onProgress?.({ zoom: z, tiles: tiles.length });
 		}
+		if (pool) await Promise.all(pending.splice(0));   // この束の job を待ってから out を捨てる（次の GPU 読み戻しへ）
 		tAsm += now() - ta;
 		k0 = k1;
 	}
 	stats.ms.lod_write = tLod2; stats.ms.assemble = tAsm;
-	proj.destroy(); eng.destroy();
+	proj.destroy(); eng.destroy(); pool?.destroy();
 
 	// ── PMTiles
 	const tp = now();
@@ -220,12 +171,9 @@ export async function toPMTiles(pbf, opts = {}) {
 		...(opts.metadata || {}),
 	};
 	for (const k of Object.keys(metadata)) if (metadata[k] === undefined) delete metadata[k];
-	// gzip: Node なら zlib（ネイティブ・pako の数倍速い）、無ければ pako。opts.compress で差し替え可。
-	let compress = opts.compress;
-	if (!compress && typeof process !== "undefined" && process.versions?.node) { try { const z = await import("node:zlib"); compress = (u8) => new Uint8Array(z.gzipSync(u8)); } catch {} }
-	const buf = writePMTiles(tiles, metadata, { minZoom, maxZoom, bounds, tileCompression: opts.tileCompression ?? "gzip", center: opts.center, compress });
+	const buf = await assemblePMTiles(items, contents, metadata, { minZoom, maxZoom, bounds, tileCompression: tileGzip ? "gzip" : "none", center: opts.center });
 	stats.ms.pmtiles = now() - tp;
-	stats.tiles = tiles.length; stats.bytes = buf.length; stats.ms.total = now() - t0;
+	stats.tiles = tileCount; stats.bytes = buf.length; stats.contents = contents.size; stats.ms.total = now() - t0;
 	return { buffer: buf, stats, metadata };
 }
 
