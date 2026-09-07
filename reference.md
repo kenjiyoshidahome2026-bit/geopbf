@@ -174,4 +174,38 @@ A loaders.gl `Loader` object for deck.gl, kepler.gl and other loaders.gl consume
 
 ---
 
+## 12. PMTiles / GeoParquet export (`geopbf/pmtiles`, `geopbf/geoparquet`, `geopbf/convert`)
+
+DOM-free modules (Node, workers, browsers). The parallel stages run as WebGPU compute when a device is available and as
+integer-identical CPU code otherwise; `stats.engine` tells which ran.
+
+### `await toPMTiles(pbf, [options])` (`geopbf/pmtiles`)
+Builds a PMTiles v3 archive of Mapbox Vector Tiles from a GeoPBF and its Gint. Resolves to `{ buffer: Uint8Array, stats, metadata }`.
+* **`options.gint`** (ArrayBuffer): the GintBUF. Defaults to `pbf._gintBuffer` (set by `pbf.gint()`); in Node use `bakeGint(pbf)` from `geopbf/convert/node-gint` or the CLI.
+* **`minZoom`** (0) / **`maxZoom`** (14): zoom range. `maxZoom ≤ 32 − log2(extent)` (20 for extent 4096).
+* **`extent`** (4096, power of two) / **`buffer`** (80, tile units): MVT grid and clip buffer.
+* **`layer`**: layer name (default: header `name`). **`lodBias`** (0): added to the rank threshold `63 − 3·(z + log2(extent/256))`; positive keeps fewer vertices.
+* **`tileCompression`** (`"gzip"` | `"none"`), **`compress`** (function replacing gzip), **`metadata`** (merged into the PMTiles JSON), **`center`**, **`batchVertices`** (32M: read-back batch size), **`onProgress({ zoom, tiles })`**.
+* **`gpu`**: `false` → CPU; a `GPU` object → use it; omitted → `navigator.gpu` or, in Node, the optional `webgpu` package.
+* `stats`: `{ engine, gpu, vertices, arcs, kept, tiles, bytes, ms: { project_lod, lod_write, assemble, pmtiles, total } }`.
+* Semantics: one layer, feature `id` = feature index (fid), polygons follow MVT 2.1 winding (outer positive / holes negative area), shared borders are simplified identically on both sides (one arc), interior full-cover tiles are de-duplicated (content hash + run length).
+
+### `await toGeoParquet(pbf, [options])` (`geopbf/geoparquet`)
+Writes GeoParquet 1.1: `geometry` (WKB, little-endian), an optional `bbox` struct column with statistics, and one column per property key (`BOOLEAN` / `INT64` / `DOUBLE` / `TIMESTAMP(ms, UTC)` / `UTF8` / `JSON`, nested keys flattened to `a.b`). Resolves to `{ buffer, stats, geo }`.
+* **`codec`** (`"gzip"` | `"none"`), **`rowGroupSize`** (65536), **`bboxColumn`** (true), **`geometryName`** (`"geometry"`), **`gpu`**, **`compress`**.
+* Coordinates are the GeoPBF integers divided by `10^precision`, converted to doubles exactly (same bits as JavaScript division). Empty geometries become nulls. Header fields travel as `geopbf:name/description/license/attribution` key-values.
+
+### Lower-level pieces (`geopbf/convert`)
+`getDevice()` / `setGPU(gpu)` / `findGPU()` — device acquisition; `createEngine(device)` / `cpuEngine()` — the kernel contract (`project`, `lodCount`, `lodWrite`, `wkb`, `bbox`); `writePMTiles(tiles, metadata, opts)` / `readPMTiles(u8)` / `zxyToTileId` / `tileIdToZxy`; `encodeTile(layer)` / `decodeTile(u8)` (MVT); `writeParquet({ schema, columns, numRows }, opts)` (generic Parquet writer).
+
+### CLI
+`geopbf pmtiles <in.geopbf> <out.pmtiles> [--minzoom N] [--maxzoom N] [--extent N] [--buffer N] [--layer name] [--gint in.gint] [--lod-bias N] [--gpu | --no-gpu]`
+`geopbf parquet <in.geopbf> <out.parquet> [--compression gzip|none] [--row-group N] [--gpu | --no-gpu]`
+
+### Verification
+`npm run test:convert` — CPU references (exact division vs BigInt, table error bound, clipping, MVT, PMTiles directory), end-to-end PMTiles (shared-border identity across zooms, hole winding, de-duplication, CLI) and GeoParquet (WKB round-trip, pyarrow read-back when available, CLI).
+`npm run verify:gpu` — headless Chromium (SwiftShader is enough) runs every kernel on CPU and GPU and asserts byte-identical output; `--bench <dir> <name>` times a real dataset both ways and checks the archives are identical.
+
+---
+
 *Document version: August 2026. This specification is based on the implementation in the `geopbf` library.*

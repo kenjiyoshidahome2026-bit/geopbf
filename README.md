@@ -41,6 +41,8 @@ npx geopbf enc in.geojson out.geopbf --precision 7 --no-gzip       # 1 cm grid, 
 npx geopbf info countries.geopbf                                   # features, vertices, precision, header fields
 npx geopbf dec countries.geopbf back.geojson                       # round trip
 npx geopbf lod countries.geopbf                                    # what Gint would actually draw, per zoom
+npx geopbf pmtiles countries.geopbf countries.pmtiles --maxzoom 10 # → PMTiles (MVT), simplified per zoom from Gint
+npx geopbf parquet countries.geopbf countries.parquet              # → GeoParquet (WKB + bbox)
 ```
 
 `lod` assigns the Visvalingam-Whyatt ranks that Gint packs into the low 6 bits of each vertex and prints how many
@@ -59,6 +61,58 @@ Output is gzipped by default (matching the GDAL driver's `COMPRESS=GZIP` and the
 `--no-gzip` for a raw file. Gzip input is detected by signature, not by extension, for every command including `enc`. For formats other than GeoJSON — Shapefile, GPKG, PostGIS,
 FlatGeobuf and everything else GDAL reads — use the [GDAL/OGR driver](https://github.com/kenjiyoshidahome2026-bit/gdal-geopbf)
 (`ogr2ogr -f GeoPBF`, needs GDAL ≥ 3.12), or the browser workers in `src/index.js`.
+
+## PMTiles / GeoParquet — GPU-accelerated export (`geopbf/pmtiles`, `geopbf/geoparquet`)
+
+The other direction: a GeoPBF (plus its Gint) goes out as a **PMTiles** archive of Mapbox Vector Tiles, or as a
+**GeoParquet** file — with the embarrassingly parallel parts of the job on the GPU (WebGPU compute), and a CPU
+path with the *same* integer arithmetic when there is no GPU. Zero new dependencies; the CLI runs on plain Node.
+
+```bash
+npx geopbf pmtiles countries.geopbf countries.pmtiles --maxzoom 10   # bakes Gint with WASM, then tiles from it
+npx geopbf pmtiles countries.geopbf countries.pmtiles --gint countries.gint --gpu   # reuse a baked Gint
+npx geopbf parquet countries.geopbf countries.parquet                # WKB + bbox covering column, gzip
+```
+
+```js
+import { toPMTiles } from "geopbf/pmtiles";
+import { toGeoParquet } from "geopbf/geoparquet";
+
+const pbf = await geopbf(file, { gint: true });          // browser: Gint is baked by the worker as usual
+const { buffer, stats } = await toPMTiles(pbf, { maxZoom: 12 });   // stats.engine → "gpu" | "cpu"
+const pq = await toGeoParquet(pbf);                      // pq.buffer → .parquet bytes, pq.geo → the "geo" metadata
+```
+
+**Tiles come from Gint, not from the raw features.** This is the same derived buffer ortho-earth draws on the GPU —
+shared borders are single arcs, every vertex carries its Visvalingam-Whyatt rank — so per-zoom simplification is a
+`rank >= threshold` filter (the `63 - 3·(z + log2(extent/256))` rule ortho-core uses at draw time), and two
+neighbouring polygons are simplified to the *identical* vertex list. No slivers, no gaps, at any zoom. The pipeline:
+
+1. `project` — Morton decode → fixed-point Web Mercator `X32/Y32` (32-bit, whole world). Once per vertex, not per zoom.
+2. `lod` — one dispatch over `(arc × zoom)`: keep `rank >= threshold`, shift to tile space, drop consecutive
+   duplicates, write compacted coordinates (count pass + write pass). All zooms in a single round trip.
+3. CPU: rings/lines are stitched from the arcs (`polyStream`/`lineStream`), bisected into tiles with buffer,
+   encoded as MVT, gzipped, and packed into PMTiles v3 (Hilbert tile ids, run-length + content de-duplication
+   for interior tiles, leaf directories when the root exceeds 16 KB).
+
+GeoParquet takes the GeoPBF integers directly (no Gint round-trip, so coordinates are exactly the file's values):
+the GPU converts `i / 10^precision` to IEEE-754 doubles by long division with round-to-nearest-even — bit-identical
+to JavaScript's own division — and reduces per-feature bboxes; the CPU assembles WKB and writes Parquet (Thrift
+compact footer, PLAIN pages, RLE definition levels, GZIP, `geo` metadata 1.1 with a `bbox` covering column and
+column statistics). Readable by pyarrow, DuckDB, GDAL, GeoPandas.
+
+**Exactness is the design rule.** Every kernel is integer-only — the Mercator latitude uses a 2^13·10⁻⁷° table
+with an exact slope column (error ≤ 3 units of 2⁻³²), longitude uses exact 64-bit division emulated in 32-bit —
+so the GPU output is not "close to" the CPU output, it is byte-identical, and `scripts/verify-convert-gpu.mjs`
+proves it on every kernel through headless Chromium (works on SwiftShader, so it runs in CI without a GPU).
+
+Where the GPU is not: Node has no `navigator.gpu`. `npm i webgpu` (Dawn) gives the CLI a real adapter; without it,
+`--gpu` reports the fallback and runs the CPU path — same bytes out. Deno's built-in WebGPU works as is. In the
+browser everything is automatic.
+
+Options — `toPMTiles(pbf, { gint, minZoom=0, maxZoom=14, extent=4096, buffer=80, layer, lodBias=0, tileCompression:"gzip", gpu, onProgress })`,
+`toGeoParquet(pbf, { codec:"gzip"|"none", rowGroupSize=65536, bboxColumn=true, geometryName="geometry", gpu })`.
+`gpu: false` forces CPU; a `GPU` object (e.g. from the `webgpu` package) can be passed as `gpu`.
 
 ## COG — Cloud Optimized GeoTIFF (`geopbf/cog`)
 
