@@ -40,7 +40,7 @@ const browser = await pw.chromium.launch({
 	args: ["--headless=new", "--no-sandbox", "--enable-unsafe-webgpu", "--enable-features=Vulkan", "--use-angle=vulkan", "--use-vulkan=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"],
 });
 const page = await browser.newPage();
-page.on("console", m => { if (m.type() === "error" && !/404/.test(m.text())) console.error("[page]", m.text()); });
+page.on("console", m => { if (m.type() === "error" && !/404/.test(m.text())) console.error("[page]", m.text()); else if (bench && m.text().startsWith("[bench]")) console.log(m.text()); });
 page.on("pageerror", e => console.error("[pageerror]", e.message));
 await page.goto(bench ? `http://localhost:${port}/tests/t-convert-bench.html?data=${encodeURIComponent(bench.name)}&maxzoom=${bench.maxzoom}` : `http://localhost:${port}/tests/t-convert-gpu.html`);
 await page.waitForFunction(() => window.__result, null, { timeout: 1800000 });
