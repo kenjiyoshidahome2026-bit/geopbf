@@ -26,6 +26,7 @@
 		"./convert": "./src/convert/index.js",
 		"./pmtiles": "./src/convert/tiler.js",
 		"./geoparquet": "./src/convert/geoparquet.js",
+		"./convert/node-gint": "./src/convert/node-gint.js",
 		"./maplibre-cog": "./src/maplibre-cog.js",
 		"./leaflet-cog": "./src/leaflet-cog.js",
 		"./sanitize": "./src/sanitize.js",

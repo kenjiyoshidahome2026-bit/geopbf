@@ -65,14 +65,14 @@ function writeGeometry(pbf, type, parts) {
 
 // 書き出しの作業バッファ（タイル毎の new/realloc を避ける。finish() は必要長だけ複製して返す）
 let scratch = new Uint8Array(1 << 20), scratchGeom = new Uint8Array(1 << 18);
-const fresh = (pbf, sc) => { const r = pbf.finish(); return r.buffer === sc.buffer ? r.slice() : r; };   // 溢れて realloc されていれば既に独立
+const fresh = (pbf) => pbf.finish().slice();   // 作業バッファ（または溢れて realloc された大きな buffer）から必要長だけ独立させる
 
 // layer: { name, extent, features: [{ id, type: 1|2|3, tags: [[key, value], …], geometry }] }
 //   geometry: type1 → number[]（点列）/ type2 → number[][]（線の配列）/ type3 → number[][][]（ポリゴン＝環配列 の配列）
 export function encodeTile(layer) {
 	const pbf = new Pbf(scratch);
 	pbf.writeMessage(3, writeLayer, layer);
-	const out = fresh(pbf, scratch);
+	const out = fresh(pbf);
 	if (pbf.buf.length > scratch.length) scratch = new Uint8Array(pbf.buf.length);   // 大きなタイルに合わせて成長
 	return out;
 }
