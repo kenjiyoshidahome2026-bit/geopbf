@@ -110,10 +110,13 @@ so the GPU output is not "close to" the CPU output, it is byte-identical, and `s
 proves it on every kernel through headless Chromium (works on SwiftShader, so it runs in CI without a GPU).
 
 Compression is one code path with no pako: Node uses `zlib` natively, browsers use `CompressionStream` driven
-through its writer/reader directly (≈4× cheaper per tile than the `Blob`→`Response` idiom). Measured on Natural Earth
-10m countries (258 polygons, 480k vertices), z0–10 = 575,559 tiles / 152 MB: 12 s on a 4-core Node with 3 workers
-(31 s single-threaded); in Chromium z0–8 takes ≈8 s with 3 workers. The GPU stage itself is ≈150 ms of that on a
-software adapter (SwiftShader) — real-GPU numbers were not measurable in the CI container.
+through its writer/reader directly (≈4× cheaper per tile than the `Blob`→`Response` idiom). The assembly stage is
+typed-array based, stops bisecting as soon as a sub-range of tiles is provably interior to a polygon (one range event
+instead of one clip per tile), encodes the attribute section once per feature, and hashes tile content before copying
+it. Measured on Natural Earth 10m countries (258 polygons, 480k vertices), z0–10 = 573,906 tiles / 152 MB, 4-core
+Node: 8.5–9.3 s with 3 workers, 18 s single-threaded, of which zlib is ≈8 s (85k unique tiles, ~90 µs each regardless
+of level); Chromium z0–8 takes ≈5.7 s with 3 workers. The GPU stage is ≈150 ms of that on a software adapter
+(SwiftShader) — real-GPU numbers were not measurable in the CI container.
 
 Where the GPU is not: Node has no `navigator.gpu`. `npm i webgpu` (Dawn) gives the CLI a real adapter; without it,
 `--gpu` reports the fallback and runs the CPU path — same bytes out. Deno's built-in WebGPU works as is. In the
@@ -124,7 +127,7 @@ Options — `toPMTiles(pbf, { gint, minZoom=0, maxZoom=14, extent=4096, buffer=8
 `gpu: false` forces CPU; a `GPU` object (e.g. from the `webgpu` package) can be passed as `gpu`.
 
 **Against tippecanoe** (v2.82, same 4-core box, same Natural Earth input, z0–10): tippecanoe 58 s / 147 MB / 573,885 tiles;
-geopbf 12.5 s from GeoJSON (encode + Gint + tiles) / 152 MB / 573,906 tiles — the same tiles within a handful, and
+geopbf ≈10 s from GeoJSON (encode 0.4 s + Gint 0.5 s + tiles 8.5–9.3 s) / 152 MB / 573,906 tiles — the same tiles within a handful, and
 interior tiles are byte-for-byte the same size apart from the layer name and the feature `id` geopbf writes. The 3 % size
 difference is vertex retention: the Gint rank threshold keeps somewhat more coastline vertices at mid zooms than
 tippecanoe's Douglas-Peucker. `lodBias` moves that knob — `+3` raises the threshold by one rank step (≈2× coarser
