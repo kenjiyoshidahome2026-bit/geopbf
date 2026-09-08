@@ -139,7 +139,7 @@ Where the GPU is not: Node has no `navigator.gpu`. `npm i webgpu` (Dawn) gives t
 `--gpu` reports the fallback and runs the CPU path — same bytes out. Deno's built-in WebGPU works as is. In the
 browser everything is automatic.
 
-Options — `toPMTiles(pbf, { gint, minZoom=0, maxZoom=14, extent=4096, buffer=80, layer, lodBias=0, dropRate=2.5, tinyPolygon=2, tinyLine=0, include, exclude, excludeAll, tileCompression:"gzip", gpu, workers, onProgress })`,
+Options — `toPMTiles(pbf, { gint, minZoom=0, maxZoom=14, extent=4096, buffer=80, layer, simplification=1, lodBias=0, dropRate=2.5, tinyPolygon=2, tinyLine=0, include, exclude, excludeAll, tileCompression:"gzip", gpu, workers, onProgress })`,
 `toGeoParquet(pbf, { codec:"gzip"|"none", rowGroupSize=65536, order="str", bboxColumn=true, geometryName="geometry", include, exclude, excludeAll, gpu })`.
 Tile quality follows tippecanoe's defaults where they matter: polygon components smaller than `tinyPolygon` tile
 units² at a zoom (measured on the full-resolution geometry, so components the simplification collapsed count too) are
@@ -168,19 +168,29 @@ covering column in GeoParquet (it would repeat the coordinates) unless `bboxColu
 `gpu: false` forces CPU; a `GPU` object (e.g. from the `webgpu` package) can be passed as `gpu`.
 
 **Against tippecanoe** (v2.82, same 4-core box, same Natural Earth input, z0–10): tippecanoe 58 s / 147 MB / 573,885 tiles;
-geopbf ≈6.5 s from GeoJSON (encode 0.4 s + Gint 0.5 s + tiles 5.3–5.9 s) / 151.5 MB / 573,898 tiles — the same tiles within a handful (16 only in geopbf, 3 only in tippecanoe, all at z6–10), and
-interior tiles are byte-for-byte the same size apart from the layer name and the feature `id` geopbf writes. The 3 % size
-difference is vertex retention: the Gint rank threshold keeps somewhat more coastline vertices at mid zooms than
-tippecanoe's Douglas-Peucker. `lodBias` moves that knob — `+3` raises the threshold by one rank step (≈2× coarser
-linearly), `+6` lands on tippecanoe's size, negative values keep more. GDAL's PMTiles driver (3.12) took 780 s for the
-same job. Lines (Natural Earth 10m roads, 56,600 features / 709k vertices, z0–10): geopbf 10.0 s / 73.8 MB / 108,686 tiles from
+geopbf ≈6.5 s from GeoJSON (encode 0.4 s + Gint 0.5 s + tiles 5.3–5.9 s) / 151.0 MB / 573,896 tiles — the same tiles within a handful (13 only in geopbf, 2 only in tippecanoe, all at z6–10), and
+interior tiles are byte-for-byte the same size apart from the layer name and the feature `id` geopbf writes; the remaining
+2.7 % is that `id` and the layer name. GDAL's PMTiles driver (3.12) took 780 s for the same job.
+
+**Simplification is calibrated to tippecanoe's, per arc.** The Gint rank is a Visvalingam area; tippecanoe drops vertices
+by Douglas-Peucker distance (1 tile unit, `-S 1`). The two do not map to each other by a constant — a VW area threshold keeps
+far more vertices on long, gently curved segments than DP does, and none on tiny islands where DP keeps 3 — so a fixed rank
+rule came out 3 % (countries) to 31 % (ZIP areas) larger than tippecanoe. `simplification` (default 1, in tile units)
+fixes this the honest way: one Douglas-Peucker decomposition per arc yields, for every vertex, the tolerance at which it
+would survive; for each arc and zoom the rank threshold is then chosen so that VW keeps as many vertices as DP would
+(NE 10m: DP 46,442 vs VW 47,985 at z0, 471,774 vs 471,927 at z10). Which vertices survive is still decided by rank, so
+shared borders stay identical on both sides. The calibration costs 0.1 s on 480k vertices and 4.2 s on 29M, runs on the
+CPU, and the per-(arc, zoom) thresholds feed the same GPU/CPU kernel (byte-identical either way). Per feature the counts
+now sit within ~10 % of tippecanoe's (Canada 7,649 vs 7,234, USA 2,725 vs 2,466 at z0). `simplification: false` restores
+the fixed rule; `lodBias` shifts the calibrated thresholds (`+3` = one rank step ≈ 1.26× coarser linearly).
+Lines (Natural Earth 10m roads, 56,600 features / 709k vertices, z0–10): geopbf 10.0 s / 72.8 MB / 108,688 tiles from
 GeoPBF (+2.2 s encode + Gint), tippecanoe 16.2 s / 69.7 MB / 108,682 tiles; every line that reaches a tile edge continues in
 the neighbouring tile (3,001 of 3,001 checked at z8), and the only features tippecanoe keeps that geopbf does not are
 15 small closed loops that the rank filter collapses at z0 (extent ≤ 3 tile units). A large polygon coverage — US Census
-ZCTA5 (TIGER 2010, 33,092 ZIP areas / 52M vertices, 28.9M after Gint folds shared borders), z0–12: geopbf 60.5 s / 322 MB /
-238,322 tiles (byte-identical on re-run), tippecanoe 251 s / 246 MB / 238,319 tiles — the same tile set within 7 tiles and
-indistinguishable in MapLibre at z3/z7/z11; the 31 % size gap is again vertex retention (`lodBias 3` → 272 MB, `6` →
-226 MB). GeoParquet of the same data: 28.5 s / 437 MB with zstd (geopandas 54 s / 542 MB with gzip; geopbf with gzip
+ZCTA5 (TIGER 2010, 33,092 ZIP areas / 52M vertices, 28.9M after Gint folds shared borders), z0–12: geopbf 47 s / 251 MB /
+238,322 tiles (byte-identical on re-run; 322 MB with `simplification: false`), tippecanoe 251 s / 246 MB / 238,319 tiles —
+the same tile set within 7 tiles, per-zoom sizes within 1–2 % from z7 up (z12: 102.0 vs 100.6 MB), and indistinguishable
+in MapLibre at z3/z7/z11. GeoParquet of the same data: 28.5 s / 437 MB with zstd (geopandas 54 s / 542 MB with gzip; geopbf with gzip
 608 MB — Node's zlib is the Chromium fork whose 4-byte hash misses the short matches WKB doubles are full of, 0.73 vs
 0.64 for stock zlib on the same bytes, which is why zstd is the default codec in Node). Points (1,000,000 synthetic, 4 attributes, z0–10): geopbf 14.6 s / 51 MB with the default `dropRate`
 (tippecanoe defaults 31 s / 42 MB), 42 s / 270 MB keeping every point (tippecanoe `-r1` 65 s / 221 MB); GeoParquet

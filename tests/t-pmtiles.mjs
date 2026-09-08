@@ -113,6 +113,15 @@ for (const z of [0, 3, 6, 9]) {
 	const c0 = await cnt(0), c9 = await cnt(9);
 	ok(c0 < c9, `LOD: A の頂点数 z0=${c0} < z9=${c9}`);
 }
+// 簡略化の較正（simplification）: 許容差が大きいほど頂点が減り、false は固定則。同じ入力で決定的
+{
+	const zc = async (o) => { const r = await toPMTiles(pbf, { gint, gpu: false, minZoom: 6, maxZoom: 6, dropRate: 1, ...o }); const pmx = await readPMTiles(r.buffer); const n = 1 << 6, tx = Math.floor((10.5 + 180) / 360 * n), ty = Math.floor((0.5 - Math.log(Math.tan(Math.PI / 4 + 10.5 * Math.PI / 360)) / (2 * Math.PI)) * n); const l = decodeTile(await pmx.getTile(6, tx, ty))[0]; return { v: l.features.find(f => f.id === 0).geometry[0].length / 2, r, cal: r.stats.calibration }; };
+	const s1 = await zc({ simplification: 1 }), s8 = await zc({ simplification: 8 }), sf = await zc({ simplification: false }), s1b = await zc({ simplification: 1 });
+	ok(s1.cal && s1.cal.dpKept.length === 1 && s1.cal.vwKept[0] > 0 && !sf.cal, `simplification: 較正の統計（DP ${s1.cal?.dpKept[0]} / VW ${s1.cal?.vwKept[0]}）・false では無し`);
+	ok(s8.v <= s1.v && s1.v >= 4, `simplification 8 の A の頂点 ${s8.v} ≤ 1 の ${s1.v}`);
+	ok(s1.r.buffer.length === s1b.r.buffer.length && s1.r.buffer.every((b, i) => b === s1b.r.buffer[i]), "simplification: 同じ入力でバイト同一");
+	let threw = false; try { await toPMTiles(pbf, { gint, gpu: false, maxZoom: 2, simplification: -1 }); } catch { threw = true; } ok(threw, "simplification が負なら例外");
+}
 // 全面塗りタイルの畳み込み（H は 10°×10°＝z9 で数千タイル）
 ok(h.contents < h.entries && h.entries < h.addressed, `全面塗りタイルの重複畳み込み（contents ${h.contents} < entries ${h.entries} < addressed ${h.addressed}）`);
 ok(pm.root.some(e => e.runLength > 1) || pm.root.some(e => e.runLength === 0), "runLength > 1 の entry（または leaf）がある");

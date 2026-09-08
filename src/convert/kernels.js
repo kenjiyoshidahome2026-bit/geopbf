@@ -47,9 +47,10 @@ export function projectCPU(arcU32) {
 }
 
 // ───────────────────────────── ② lod ─────────────────────────────
-// uniform Q: arcCount, base, zoomCount, minZoom, extentShift, mode, pad, pad, th[8] (vec4u ×8 = 32 ズーム分の閾値)
+// uniform Q: arcCount, base, zoomCount, minZoom, extentShift, mode, useArcTh, pad, th[8] (vec4u ×8 = 32 ズーム分の閾値)
+// arcTh: useArcTh=1 のとき (arc, zoom) 毎の閾値（u8 を u32 に 4 個詰め・slot = k·arcCount + a）＝calibrate.js の DP 予算
 export const LOD_WGSL = /* wgsl */`
-struct ParamsQ { arcCount: u32, base: u32, zoomCount: u32, minZoom: u32, extentShift: u32, mode: u32, pad0: u32, pad1: u32, th: array<vec4<u32>, 8> };
+struct ParamsQ { arcCount: u32, base: u32, zoomCount: u32, minZoom: u32, extentShift: u32, mode: u32, useArcTh: u32, pad1: u32, th: array<vec4<u32>, 8> };
 @group(0) @binding(0) var<uniform> Q: ParamsQ;
 @group(0) @binding(1) var<storage, read> xy: array<u32>;
 @group(0) @binding(2) var<storage, read> rk: array<u32>;
@@ -58,14 +59,16 @@ struct ParamsQ { arcCount: u32, base: u32, zoomCount: u32, minZoom: u32, extentS
 @group(0) @binding(5) var<storage, read_write> counts: array<u32>;
 @group(0) @binding(6) var<storage, read_write> bbox: array<u32>;
 @group(0) @binding(7) var<storage, read_write> outv: array<u32>;
+@group(0) @binding(8) var<storage, read> arcTh: array<u32>;
 @compute @workgroup_size(${WG}) fn main(@builtin(global_invocation_id) g: vec3<u32>) {
 	let a = g.x + Q.base; let k = g.y;
 	if (a >= Q.arcCount || k >= Q.zoomCount) { return; }
 	let z = Q.minZoom + k;
 	let sh = 32u - z - Q.extentShift;
-	let th = Q.th[k >> 2u][k & 3u];
 	let off = arcs[a * 2u]; let len = arcs[a * 2u + 1u];
 	let slot = k * Q.arcCount + a;
+	var th = Q.th[k >> 2u][k & 3u];
+	if (Q.useArcTh == 1u) { th = (arcTh[slot >> 2u] >> ((slot & 3u) * 8u)) & 255u; }
 	var n = 0u; var px = 0u; var py = 0u;
 	var minx = 0xFFFFFFFFu; var miny = 0xFFFFFFFFu; var maxx = 0u; var maxy = 0u;
 	var base = 0u;
@@ -85,20 +88,27 @@ struct ParamsQ { arcCount: u32, base: u32, zoomCount: u32, minZoom: u32, extentS
 	}
 }`;
 
-export function lodUniform({ arcCount, base = 0, zoomCount, minZoom, extentShift, mode, thresholds }) {
+export function lodUniform({ arcCount, base = 0, zoomCount, minZoom, extentShift, mode, thresholds, arcThresholds }) {
 	const u = new Uint32Array(8 + 32);
-	u[0] = arcCount; u[1] = base; u[2] = zoomCount; u[3] = minZoom; u[4] = extentShift; u[5] = mode;
+	u[0] = arcCount; u[1] = base; u[2] = zoomCount; u[3] = minZoom; u[4] = extentShift; u[5] = mode; u[6] = arcThresholds ? 1 : 0;
 	for (let k = 0; k < zoomCount; k++) u[8 + k] = thresholds[k];
+	return u;
+}
+// (arc, zoom) 閾値表（Uint8Array・k 優先）→ GPU 用の u32 詰め（4 バイト境界に揃えた複製）
+export function packArcThresholds(arcTh) {
+	if (!arcTh) return new Uint32Array(1);
+	const u = new Uint32Array((arcTh.length + 3) >> 2);
+	new Uint8Array(u.buffer).set(arcTh);
 	return u;
 }
 
 // CPU 参照。mode 0: counts/bbox を埋める。mode 1: offsets に従い out へ書く（out は呼び出し側が確保）。
-export function lodCPU({ xy, rk, arcs, arcCount, zoomCount, minZoom, extentShift, thresholds, mode, offsets, counts, bbox, out }) {
+export function lodCPU({ xy, rk, arcs, arcCount, zoomCount, minZoom, extentShift, thresholds, arcThresholds, mode, offsets, counts, bbox, out }) {
 	for (let k = 0; k < zoomCount; k++) {
-		const z = minZoom + k, sh = 32 - z - extentShift, th = thresholds[k];
+		const z = minZoom + k, sh = 32 - z - extentShift, thz = thresholds[k];
 		const shift = (v) => sh >= 32 ? 0 : (v >>> sh);
 		for (let a = 0; a < arcCount; a++) {
-			const off = arcs[a * 2], len = arcs[a * 2 + 1], slot = k * arcCount + a;
+			const off = arcs[a * 2], len = arcs[a * 2 + 1], slot = k * arcCount + a, th = arcThresholds ? arcThresholds[slot] : thz;
 			let n = 0, px = 0, py = 0, minx = 0xFFFFFFFF, miny = 0xFFFFFFFF, maxx = 0, maxy = 0;
 			const base = mode === 1 ? offsets[slot] : 0;
 			for (let i = 0; i < len; i++) {

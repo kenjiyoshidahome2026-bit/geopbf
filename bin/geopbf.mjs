@@ -34,7 +34,8 @@ const USAGE = `geopbf <command>
        [--drop-rate R]              点の低ズーム間引き率（tippecanoe -r 相当・既定 2.5・1＝全点保持）
        [--tiny-polygon A]           タイル座標で面積 A 未満の面成分を落とす（tippecanoe -s 相当・既定 2・0＝無効）
        [--tiny-line L]              外接が L 未満の線を落とす（既定 0＝無効）
-       [--lod-bias N]               簡略化の強さ（正で粗く・+3 で約 2 倍粗い）
+       [--simplification N|off]     DP 許容差（タイル単位・既定 1＝tippecanoe -S 1 相当・arc 毎にランク閾値を較正・off で固定則）
+       [--lod-bias N]               較正後の閾値をずらす（正で粗く・+3 で 1 ズーム段＝約 2 倍粗い）
        [--include a,b] [--exclude a,b] [--exclude-all]  属性の選別（tippecanoe -y / -x / -X 相当）
   parquet <in.geopbf> <out.parquet>  GeoPBF を GeoParquet（WKB・bbox 列・gzip）へ
        [--compression zstd|gzip|none] [--row-group N] [--gpu | --no-gpu]   （既定 zstd＝Node 22.15+・gzip の半分以下）
@@ -271,7 +272,7 @@ const engineNote = (st) => st.engine === "gpu" ? `GPU ${[st.gpu?.vendor, st.gpu?
 
 async function pmtiles(argv) {
 	const { toPMTiles } = await import("../src/convert/tiler.js");
-	const { pos: [inPath, outPath], opts } = parseArgs(argv, ["minzoom", "maxzoom", "extent", "buffer", "layer", "gint", "lod-bias", "workers", "drop-rate", "tiny-polygon", "tiny-line", "include", "exclude"]);
+	const { pos: [inPath, outPath], opts } = parseArgs(argv, ["minzoom", "maxzoom", "extent", "buffer", "layer", "gint", "lod-bias", "workers", "drop-rate", "tiny-polygon", "tiny-line", "include", "exclude", "simplification"]);
 	if (!inPath || !outPath) throw new Error("pmtiles <in.geopbf> <out.pmtiles>");
 	const t0 = Date.now();
 	const pbf = await openPbf(inPath);
@@ -285,12 +286,13 @@ async function pmtiles(argv) {
 		minZoom: opts.minzoom !== undefined ? +opts.minzoom : 0, maxZoom: opts.maxzoom !== undefined ? +opts.maxzoom : 14,
 		extent: opts.extent ? +opts.extent : undefined, buffer: opts.buffer !== undefined ? +opts.buffer : undefined,
 		layer: opts.layer, lodBias: opts["lod-bias"] !== undefined ? +opts["lod-bias"] : undefined, workers: opts.workers !== undefined ? +opts.workers : undefined, dropRate: opts["drop-rate"] !== undefined ? +opts["drop-rate"] : undefined,
+		simplification: opts.simplification === undefined ? undefined : opts.simplification === "off" ? false : +opts.simplification,
 		tinyPolygon: opts["tiny-polygon"] !== undefined ? +opts["tiny-polygon"] : undefined, tinyLine: opts["tiny-line"] !== undefined ? +opts["tiny-line"] : undefined, ...attrOpts(opts) });
 	await writeFile(outPath, r.buffer);
 	const s = r.stats;
 	console.log(`${inPath}  features ${num(pbf.length)}  gint ${opts.gint ? "読込" : "焼き"} ${t1 - t0} ms（arc ${num(s.arcs)}・頂点 ${num(s.vertices)}）`);
 	console.log(`${outPath}  ${mb(s.bytes)}  タイル ${num(s.tiles)}（内容 ${num(s.contents)} 種）  z${r.metadata.minzoom}-${r.metadata.maxzoom}  ${engineNote(s)}・worker ${s.workers}`);
-	console.log(`  投影+LOD ${s.ms.project_lod.toFixed(0)} ms・書き出し ${s.ms.lod_write.toFixed(0)} ms・組立/クリップ/MVT ${s.ms.assemble.toFixed(0)} ms・PMTiles ${s.ms.pmtiles.toFixed(0)} ms・合計 ${s.ms.total.toFixed(0)} ms  （残存頂点 ${num(s.kept)}＝全ズーム合計）`);
+	console.log(`  投影+LOD ${s.ms.project_lod.toFixed(0)} ms・較正 ${(s.ms.calibrate ?? 0).toFixed(0)} ms・書き出し ${s.ms.lod_write.toFixed(0)} ms・組立/クリップ/MVT ${s.ms.assemble.toFixed(0)} ms・PMTiles ${s.ms.pmtiles.toFixed(0)} ms・合計 ${s.ms.total.toFixed(0)} ms  （残存頂点 ${num(s.kept)}＝全ズーム合計）`);
 }
 
 async function parquet(argv) {

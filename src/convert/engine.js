@@ -2,7 +2,7 @@
 // dispatch は maxComputeWorkgroupsPerDimension（既定 65535）× WG を超えたら base をずらして分割する。
 import { createContext } from "./gpu.js";
 import { mercTable, YT_LEN } from "./merc.js";
-import { PROJECT_WGSL, LOD_WGSL, WKB_WGSL, BBOX_WGSL, WG, lodUniform, projectCPU, lodCPU, wkbCPU, bboxCPU } from "./kernels.js";
+import { PROJECT_WGSL, LOD_WGSL, WKB_WGSL, BBOX_WGSL, WG, lodUniform, packArcThresholds, projectCPU, lodCPU, wkbCPU, bboxCPU } from "./kernels.js";
 
 export function createEngine(device) {
 	if (!device) return cpuEngine();
@@ -31,14 +31,14 @@ export function createEngine(device) {
 			const { arcCount, zoomCount } = params;
 			const arcsBuf = ctx.upload(arcs), counts = ctx.alloc(zoomCount * arcCount * 4), bbox = ctx.alloc(zoomCount * arcCount * 16);
 			// 同じバッファを read と read_write の両 binding に挙げると bind group が無効＝黙って何も走らない。dummy は別々に。
-			const d1 = ctx.alloc(4), d2 = ctx.alloc(4);
+			const d1 = ctx.alloc(4), d2 = ctx.alloc(4), thBuf = ctx.upload(packArcThresholds(params.arcThresholds));
 			const pipe = ctx.pipeline(LOD_WGSL);
 			for (let base = 0; base < arcCount; base += chunk) {
 				const cnt = Math.min(chunk, arcCount - base);
-				ctx.run(pipe, [ctx.uniform(lodUniform({ ...params, base, mode: 0 })), proj.xy, proj.rk, arcsBuf, d1, counts, bbox, d2], [Math.ceil(cnt / WG), zoomCount]);
+				ctx.run(pipe, [ctx.uniform(lodUniform({ ...params, base, mode: 0 })), proj.xy, proj.rk, arcsBuf, d1, counts, bbox, d2, thBuf], [Math.ceil(cnt / WG), zoomCount]);
 			}
 			const out = { counts: new Uint32Array(await ctx.readback(counts, zoomCount * arcCount * 4)), bbox: new Uint32Array(await ctx.readback(bbox, zoomCount * arcCount * 16)) };
-			arcsBuf.destroy(); counts.destroy(); bbox.destroy(); d1.destroy(); d2.destroy();
+			arcsBuf.destroy(); counts.destroy(); bbox.destroy(); d1.destroy(); d2.destroy(); thBuf.destroy();
 			return out;
 		},
 		// ② mode 1 → Uint32Array(total·2)。offsets はズーム先頭からの累積（呼び出し側が prefix sum）。
@@ -47,14 +47,14 @@ export function createEngine(device) {
 			const { arcCount } = params;
 			const arcsBuf = ctx.upload(arcs), offBuf = ctx.upload(offsets), outBuf = ctx.alloc(total * 8), d1 = ctx.alloc(4), d2 = ctx.alloc(4);
 			const pipe = ctx.pipeline(LOD_WGSL);
-			const sub = { ...params, minZoom: params.minZoom + zoomFrom, zoomCount: zoomTo - zoomFrom, thresholds: params.thresholds.slice(zoomFrom, zoomTo) };
+			const sub = subParams(params, zoomFrom, zoomTo), thBuf = ctx.upload(packArcThresholds(sub.arcThresholds));
 			// slot = k·arcCount + a は「部分ズーム」の k で数えるので offsets も部分を渡す（呼び出し側で slice 済み前提）
 			for (let base = 0; base < arcCount; base += chunk) {
 				const cnt = Math.min(chunk, arcCount - base);
-				ctx.run(pipe, [ctx.uniform(lodUniform({ ...sub, base, mode: 1 })), proj.xy, proj.rk, arcsBuf, offBuf, d1, d2, outBuf], [Math.ceil(cnt / WG), sub.zoomCount]);
+				ctx.run(pipe, [ctx.uniform(lodUniform({ ...sub, base, mode: 1 })), proj.xy, proj.rk, arcsBuf, offBuf, d1, d2, outBuf, thBuf], [Math.ceil(cnt / WG), sub.zoomCount]);
 			}
 			const out = new Uint32Array(await ctx.readback(outBuf, total * 8));
-			arcsBuf.destroy(); offBuf.destroy(); outBuf.destroy(); d1.destroy(); d2.destroy();
+			arcsBuf.destroy(); offBuf.destroy(); outBuf.destroy(); d1.destroy(); d2.destroy(); thBuf.destroy();
 			return out;
 		},
 		// ③ Int32Array(n) / d → Uint32Array(2n)（double の lo,hi）
@@ -87,6 +87,12 @@ export function createEngine(device) {
 	};
 }
 
+// 部分ズーム [zoomFrom, zoomTo) のパラメータ（閾値・arc 別閾値表は k 優先なので連続部分）
+function subParams(params, zoomFrom, zoomTo) {
+	return { ...params, minZoom: params.minZoom + zoomFrom, zoomCount: zoomTo - zoomFrom, thresholds: params.thresholds.slice(zoomFrom, zoomTo),
+		arcThresholds: params.arcThresholds ? params.arcThresholds.subarray(zoomFrom * params.arcCount, zoomTo * params.arcCount) : undefined };
+}
+
 // CPU 版＝同じ契約（GPU 無し・検定の参照）。project の戻りは typed array のまま（read() で同形に）。
 export function cpuEngine() {
 	return {
@@ -100,8 +106,7 @@ export function cpuEngine() {
 		},
 		async lodWrite(proj, arcs, params, offsets, total, zoomFrom = 0, zoomTo = params.zoomCount) {
 			const out = new Uint32Array(total * 2);
-			const sub = { ...params, minZoom: params.minZoom + zoomFrom, zoomCount: zoomTo - zoomFrom, thresholds: params.thresholds.slice(zoomFrom, zoomTo) };
-			lodCPU({ xy: proj.xy, rk: proj.rk, arcs, ...sub, mode: 1, offsets, out });
+			lodCPU({ xy: proj.xy, rk: proj.rk, arcs, ...subParams(params, zoomFrom, zoomTo), mode: 1, offsets, out });
 			return out;
 		},
 		async wkb(iv, d) { return wkbCPU(iv, d); },

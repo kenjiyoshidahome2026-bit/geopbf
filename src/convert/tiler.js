@@ -18,6 +18,7 @@ import { gzipMany } from "./gzip.js";
 import { assemblePMTiles, sameBytes } from "./pmtiles.js";
 import { attrFilter } from "./attrs.js";
 import { buildTagTable } from "./tagtable.js";
+import { calibrateArcThresholds } from "./calibrate.js";
 export { attrFilter };
 
 // lodBias: 正で閾値を上げる＝残る頂点が減る（3 で VW 面積 4 倍＝線形で 2 倍粗い相当）。負で細かく。
@@ -84,6 +85,8 @@ export function componentAreas(ps, arcMeta, xy) {
 //   0 で無効）。落とした面積は feature 毎に積み、閾値に達する毎に閾値面積の正方形を 1 つ残す
 // opts.tinyLine: 外接がこれ未満（両辺）の線分列を落とす（既定 0＝落とさない）
 // opts.include / exclude / excludeAll: 属性の選別（tippecanoe の -y / -x / -X）
+// opts.simplification: DP 許容差（タイル単位・既定 1＝tippecanoe -S 1 相当）。arc ごとに VW ランク閾値を「DP が残す頂点数」へ
+//   較正する（calibrate.js）。false で固定則 63−3(z+log2(extent/256)) のみ。lodBias は較正後に足す
 export async function toPMTiles(pbf, opts = {}) {
 	const t0 = now();
 	const gintBuf = opts.gint ?? pbf._gintBuffer;
@@ -120,7 +123,17 @@ export async function toPMTiles(pbf, opts = {}) {
 	const proj = eng.project(verts);
 	const zoomCount = maxZoom - minZoom + 1;
 	const thresholds = Array.from({ length: zoomCount }, (_, k) => lodThreshold(minZoom + k, extent, lodBias));
-	const params = { arcCount: A, zoomCount, minZoom, extentShift, thresholds };
+	const simplification = opts.simplification ?? 1;
+	let projCPU = null;   // 較正と面積計算で使う投影結果（GPU なら 1 回だけ読み戻す）
+	const readProj = async () => projCPU ??= (proj.xy instanceof Uint32Array ? { xy: proj.xy, rk: proj.rk } : await proj.read());
+	let arcThresholds;
+	if (simplification !== false && d.arcCount) {
+		if (!(simplification > 0)) throw new Error("simplification は正の数か false");
+		const tc = now(), { xy, rk } = await readProj();
+		const cal = calibrateArcThresholds({ xy, rk, arcs, arcCount: d.arcCount, totalArcs: A, extentShift, minZoom, maxZoom, tolerance: simplification, lodBias });
+		arcThresholds = cal.arcThresholds; stats.calibration = cal.stats; stats.ms.calibrate = now() - tc;
+	}
+	const params = { arcCount: A, zoomCount, minZoom, extentShift, thresholds, arcThresholds };
 	const { counts, bbox } = await eng.lodCount(proj, arcs, params);
 	stats.ms.project_lod = now() - t1;
 	const offsets = new Uint32Array(counts.length);
@@ -129,7 +142,7 @@ export async function toPMTiles(pbf, opts = {}) {
 	const zoomTotal = (k) => (k + 1 < zoomCount ? offsets[(k + 1) * A] : total) - offsets[k * A];
 	// 面成分の元解像度の面積（極小判定用・tinyPolygon 0 なら不要）。GPU なら投影結果を読み戻す
 	let compArea = null;
-	if (tinyPolygon > 0 && d.polyStream?.length) { const ta = now(); const xy = proj.xy instanceof Uint32Array ? proj.xy : (await proj.read()).xy; compArea = componentAreas(d.polyStream, d.arcMeta, xy); stats.ms.area = now() - ta; }
+	if (tinyPolygon > 0 && d.polyStream?.length) { const ta = now(); const { xy } = await readProj(); compArea = componentAreas(d.polyStream, d.arcMeta, xy); stats.ms.area = now() - ta; }
 
 	// ── 属性 → typed array 表（キー辞書・UTF-8 文字列辞書・feature 別エントリ）＝worker へは memcpy で渡る
 	//（fid 毎の [[k,v],…] 配列の構造化クローンは 100 万件で worker あたり 4 秒＝直列で 16 秒掛かっていた）
