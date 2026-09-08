@@ -209,6 +209,7 @@ Writes GeoParquet 1.1: `geometry` (WKB, little-endian), an optional `bbox` struc
 ### Verification
 `npm run test:convert` — CPU references (exact division vs BigInt, table error bound, clipping, MVT, PMTiles directory), end-to-end PMTiles (shared-border identity across zooms, hole winding, de-duplication, CLI) and GeoParquet (WKB round-trip, pyarrow read-back when available, CLI).
 `npm run verify:gpu` — headless Chromium (SwiftShader is enough) runs every kernel on CPU and GPU and asserts byte-identical output; `--bench <dir> <name>` times a real dataset both ways and checks the archives are identical.
+`npm run verify:npm` — packs the tarball, installs it into a throw-away Vite 8 app, builds, and runs the built app in headless Chromium (Playwright's, or `$CHROME`): GeoJSON → Gint (worker + WASM) → identify → PMTiles with two tile workers → GeoParquet. `npm run verify:all` chains `npm test`, `verify:gpu` and `verify:npm`; `.github/workflows/ci.yml` runs the same three on push and pull request (Node 22, pyarrow installed so the Parquet read-back is not skipped). `npm ci` works from the committed lockfile; `tests/fixtures/amedas.geopbf` (JMA AMeDAS stations, 141 KB) is the real-data fixture the loader tests use.
 
 ---
 
