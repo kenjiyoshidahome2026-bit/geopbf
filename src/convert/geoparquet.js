@@ -10,6 +10,7 @@ import { createEngine, cpuEngine } from "./engine.js";
 import { writeParquet, PT, REP } from "./parquet.js";
 import { zxyToTileId } from "./pmtiles.js";
 import { attrFilter } from "./attrs.js";
+import { hasZstd } from "./gzip.js";
 
 const { TAGS } = GeoPBF;
 const WKB = { Point: 1, LineString: 2, Polygon: 3, MultiPoint: 4, MultiLineString: 5, MultiPolygon: 6, GeometryCollection: 7 };
@@ -153,7 +154,8 @@ function spatialOrder(kind, bbox, has, n, rowGroupSize) {
 	return idx.concat(tail);
 }
 
-// opts: { gpu, codec: "gzip"|"none", rowGroupSize, compress, geometryName="geometry", bboxColumn=true|"auto"|false, order="str"|"hilbert"|"morton"|"none" }
+// opts: { gpu, codec: "zstd"|"gzip"|"none"（既定＝Node は zstd・ブラウザは gzip）, level（zstd・既定 9）, pageSize, rowGroupSize, compress,
+//         geometryName="geometry", bboxColumn=true|"auto"|false, order="str"|"hilbert"|"morton"|"none", include/exclude/excludeAll }
 export async function toGeoParquet(pbf, opts = {}) {
 	const t0 = now();
 	const stats = { engine: "cpu", features: pbf.length, vertices: 0, ms: {} };
@@ -238,8 +240,10 @@ export async function toGeoParquet(pbf, opts = {}) {
 	const meta = { name: pbf.name?.(), description: pbf.description?.(), license: pbf.license?.(), attribution: pbf.attribution?.() };
 	for (const k in meta) if (meta[k]) keyValue["geopbf:" + k] = meta[k];
 	const t3 = now();
-	const buffer = await writeParquet({ schema, columns, numRows: pbf.length }, { rowGroupSize, codec: opts.codec ?? "gzip", keyValue, createdBy: "geopbf", compress: opts.compress });
-	stats.order = order;
+	// コーデック既定: Node（zstd あり）は zstd＝WKB の double 列で gzip の半分以下・同じ時間。ブラウザは gzip
+	const codec = opts.codec ?? (await hasZstd() ? "zstd" : "gzip");
+	const buffer = await writeParquet({ schema, columns, numRows: pbf.length }, { rowGroupSize, codec, level: opts.level, pageSize: opts.pageSize, keyValue, createdBy: "geopbf", compress: opts.compress });
+	stats.order = order; stats.codec = codec;
 	stats.ms.parquet = now() - t3; stats.ms.total = now() - t0; stats.bytes = buffer.length;
 	return { buffer, stats, geo };
 }

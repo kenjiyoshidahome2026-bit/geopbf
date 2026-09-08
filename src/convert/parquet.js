@@ -5,7 +5,7 @@
 //
 // 対応する列型: BOOLEAN / INT64 / DOUBLE / BYTE_ARRAY（UTF8・JSON・生バイト）。
 // スキーマは depth-first の SchemaElement 列で受ける（GeoParquet の bbox = optional group { required double ×4 }）。
-import { gzip } from "./gzip.js";
+import { gzip, zstd } from "./gzip.js";
 
 // ── Thrift compact protocol ──
 const CT = { BOOL_TRUE: 1, BOOL_FALSE: 2, BYTE: 3, I16: 4, I32: 5, I64: 6, DOUBLE: 7, BINARY: 8, LIST: 9, SET: 10, MAP: 11, STRUCT: 12 };
@@ -34,7 +34,7 @@ export class TWriter {
 export const PT = { BOOLEAN: 0, INT32: 1, INT64: 2, INT96: 3, FLOAT: 4, DOUBLE: 5, BYTE_ARRAY: 6, FIXED_LEN_BYTE_ARRAY: 7 };
 export const REP = { REQUIRED: 0, OPTIONAL: 1, REPEATED: 2 };
 const CONV = { UTF8: 0, TIMESTAMP_MILLIS: 9, JSON: 19 };
-const CODEC = { none: 0, snappy: 1, gzip: 2 };
+const CODEC = { none: 0, snappy: 1, gzip: 2, zstd: 6 };
 
 // SchemaElement: { name, type?, repetition?, numChildren?, logical?: "UTF8"|"JSON"|"TIMESTAMP_MILLIS" }
 function writeSchemaElement(w, e) {
@@ -143,12 +143,13 @@ function statsOf(type, vals) {
 
 // columns: [{ path: ["a"] | ["bbox","xmin"], type: PT.*, values?: 配列（行順）| get(row) → 値 | null,
 //            stats?: false で統計を省く（既定＝全列）, dict?: false で辞書化しない（幾何の WKB など）}]
-// opts: { rowGroupSize=65536, codec:"gzip"|"none", keyValue: {k: v}, createdBy, compress?: async (u8)=>u8 }
+// opts: { rowGroupSize=65536, codec:"gzip"|"zstd"|"none", level（zstd）, pageSize=1MB（データページの値バイト上限）,
+//         keyValue: {k: v}, createdBy, compress?: async (u8)=>u8 }
 export async function writeParquet({ schema, columns, numRows }, opts = {}) {
-	const rowGroupSize = opts.rowGroupSize ?? 65536, codecName = opts.codec ?? "gzip", codec = CODEC[codecName];
-	if (codec === undefined || codec === 1) throw new Error("parquet: codec は gzip か none");
-	const gz = opts.compress ?? gzip;
-	const compress = async (u8) => codec === 2 ? gz(u8) : u8;
+	const rowGroupSize = opts.rowGroupSize ?? 65536, codecName = opts.codec ?? "gzip", codec = CODEC[codecName], pageSize = opts.pageSize ?? (1 << 20);
+	if (codec === undefined || codec === 1) throw new Error("parquet: codec は gzip か zstd か none");
+	const gz = opts.compress ?? (codec === 6 ? (u8) => zstd(u8, opts.level) : gzip);
+	const compress = async (u8) => codec ? gz(u8) : u8;
 	const parts = [new Uint8Array([0x50, 0x41, 0x52, 0x31])];   // "PAR1"
 	let fileOff = 4;
 	const rowGroups = [];
@@ -164,7 +165,6 @@ export async function writeParquet({ schema, columns, numRows }, opts = {}) {
 				levels[i] = 1; vals.push(v);
 			}
 			const st = col.stats === false ? null : statsOf(col.type, vals);
-			const lv = encodeDefLevels(levels);
 			const dic = col.dict === false || col.type === PT.BOOLEAN ? null : tryDictionary(col.type, vals);
 			let unc = 0, cmp = 0, dictOff = null;
 			const page = async (kind, body, numValues, encoding) => {   // ページを書き、(unc, cmp) を積む
@@ -181,14 +181,34 @@ export async function writeParquet({ schema, columns, numRows }, opts = {}) {
 				unc += phb.length + body.length; cmp += phb.length + comp.length;
 				return off;
 			};
+			// データページ分割：値のバイト量が pageSize を超えない行範囲ごとに 1 ページ（読み手のストリーミング・巨大 1 ページ回避）
+			const bytesOf = col.type === PT.BYTE_ARRAY ? (v) => 4 + toBytes(v).length : col.type === PT.BOOLEAN ? () => 0.125 : () => 8;
+			const ranges = [];   // [row0, row1, val0, val1]
+			{
+				let r0i = 0, v0 = 0, acc = 0, vi = 0;
+				for (let i = 0; i < n; i++) {
+					if (!levels[i]) continue;
+					const b = dic ? 1 : bytesOf(vals[vi]);
+					if (acc + b > pageSize && vi > v0) { ranges.push([r0i, i, v0, vi]); r0i = i; v0 = vi; acc = 0; }
+					acc += b; vi++;
+				}
+				ranges.push([r0i, n, v0, vi]);
+			}
+			let pageOff = null;
 			if (dic) {
 				dictOff = await page(2, encodeValues(col.type, dic.dict), dic.dict.length, 0);
-				const w = Math.max(1, Math.ceil(Math.log2(dic.dict.length))), hb = encodeHybrid(dic.idx, vals.length, w);
-				const raw = new Uint8Array(lv.length + hb.length); raw.set(lv, 0); raw.set(hb, lv.length);
-				var pageOff = await page(0, raw, n, 8);   // RLE_DICTIONARY
+				const w = Math.max(1, Math.ceil(Math.log2(dic.dict.length)));
+				for (const [a, b, va, vb] of ranges) {
+					const lv = encodeDefLevels(levels.subarray(a, b)), hb = encodeHybrid(dic.idx.subarray(va, vb), vb - va, w);
+					const raw = new Uint8Array(lv.length + hb.length); raw.set(lv, 0); raw.set(hb, lv.length);
+					const off = await page(0, raw, b - a, 8); pageOff ??= off;   // RLE_DICTIONARY
+				}
 			} else {
-				const vb = encodeValues(col.type, vals), raw = new Uint8Array(lv.length + vb.length); raw.set(lv, 0); raw.set(vb, lv.length);
-				var pageOff = await page(0, raw, n, 0);   // PLAIN
+				for (const [a, b, va, vb] of ranges) {
+					const lv = encodeDefLevels(levels.subarray(a, b)), vbytes = encodeValues(col.type, vals.slice(va, vb));
+					const raw = new Uint8Array(lv.length + vbytes.length); raw.set(lv, 0); raw.set(vbytes, lv.length);
+					const off = await page(0, raw, b - a, 0); pageOff ??= off;   // PLAIN
+				}
 			}
 			totalBytes += unc; totalComp += cmp;
 			chunks.push({ col, pageOff, dictOff, unc, cmp, n, nulls, st });

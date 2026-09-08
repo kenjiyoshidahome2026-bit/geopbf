@@ -37,7 +37,7 @@ const USAGE = `geopbf <command>
        [--lod-bias N]               簡略化の強さ（正で粗く・+3 で約 2 倍粗い）
        [--include a,b] [--exclude a,b] [--exclude-all]  属性の選別（tippecanoe -y / -x / -X 相当）
   parquet <in.geopbf> <out.parquet>  GeoPBF を GeoParquet（WKB・bbox 列・gzip）へ
-       [--compression gzip|none] [--row-group N] [--gpu | --no-gpu]
+       [--compression zstd|gzip|none] [--row-group N] [--gpu | --no-gpu]   （既定 zstd＝Node 22.15+・gzip の半分以下）
        [--include a,b] [--exclude a,b] [--exclude-all]  列の選別
        [--order str|hilbert|morton|none]  行の空間整列（既定 str＝行グループ bbox が重ならない・none＝入力順）
        [--no-bbox]                  bbox 覆域列を書かない（点データで半分の大きさ・刈り込みは失う）
@@ -300,11 +300,11 @@ async function parquet(argv) {
 	const pbf = await openPbf(inPath);
 	const wantGpu = gpuOpt(opts);
 	if (wantGpu === true) { const { findGPU } = await import("../src/convert/gpu.js"); if (!(await findGPU())) console.error("--gpu: WebGPU が見つからない（Node は `npm i webgpu`）＝CPU 経路で続行"); }
-	const r = await toGeoParquet(pbf, { gpu: wantGpu, codec: opts.compression || "gzip", rowGroupSize: opts["row-group"] ? +opts["row-group"] : undefined, order: opts.order, bboxColumn: opts["no-bbox"] ? false : undefined, ...attrOpts(opts) });
+	const r = await toGeoParquet(pbf, { gpu: wantGpu, codec: opts.compression || undefined, rowGroupSize: opts["row-group"] ? +opts["row-group"] : undefined, order: opts.order, bboxColumn: opts["no-bbox"] ? false : undefined, ...attrOpts(opts) });
 	await writeFile(outPath, r.buffer);
 	const s = r.stats;
 	console.log(`${inPath}  features ${num(s.features)}  頂点 ${num(s.vertices)}`);
-	console.log(`${outPath}  ${mb(s.bytes)}  ${r.geo.columns.geometry.geometry_types.join("/")}  order ${s.order}  ${engineNote(s)}`);
+	console.log(`${outPath}  ${mb(s.bytes)}  ${r.geo.columns.geometry.geometry_types.join("/")}  order ${s.order}  ${s.codec}  ${engineNote(s)}`);
 	console.log(`  復号 ${s.ms.decode.toFixed(0)} ms・double/bbox ${s.ms.kernels.toFixed(0)} ms・WKB ${s.ms.wkb.toFixed(0)} ms・Parquet ${s.ms.parquet.toFixed(0)} ms・合計 ${s.ms.total.toFixed(0)} ms`);
 }
 

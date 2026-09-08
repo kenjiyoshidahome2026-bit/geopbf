@@ -8,5 +8,5 @@ export { createEngine, cpuEngine } from "./engine.js";
 export { writePMTiles, assemblePMTiles, readPMTiles, zxyToTileId, tileIdToZxy } from "./pmtiles.js";
 export { encodeTile } from "./mvt.js";
 export { decodeTile } from "./mvt-decode.js";
-export { gzip, gunzip } from "./gzip.js";
+export { gzip, gunzip, zstd, unzstd, hasZstd } from "./gzip.js";
 export { writeParquet, PT, REP } from "./parquet.js";

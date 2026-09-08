@@ -1,6 +1,11 @@
 // modules/inflate.js ── 圧縮/伸長の一本化（pako 不使用）。Node（main / worker_threads）は node:zlib、ブラウザ/worker は
 // CompressionStream / DecompressionStream を writer/reader で直接叩く（Blob→Response 経由の約 1/4 の固定費）。
-// format: "gzip" | "deflate"（zlib 包み）| "deflate-raw"。どれも非同期の同じ契約 → Promise<Uint8Array>。
+// format: "gzip" | "deflate"（zlib 包み）| "deflate-raw" | "zstd"（Node 22.15+ の node:zlib だけ・ブラウザには無い＝hasZstd() で確認）。
+// どれも非同期の同じ契約 → Promise<Uint8Array>。
+//
+// ⚠ Node の zlib は Chromium 版（4 バイトハッシュ）で、double 列のような「3 バイトの短い一致」が多いデータでは素の zlib より
+// 1 割強大きくなる（WKB 実測: Node 0.73 / CPython 0.64）。MVT タイルではむしろ良い（0.656 / 0.673）。大きな数値列は zstd が
+// 同じ時間で半分以下（level 9 で 0.38）＝GeoParquet は Node では zstd を既定にする。
 let zlib = null, probed = null;
 const probe = () => probed ??= (async () => {
 	if (typeof process !== "undefined" && process.versions?.node) { try { zlib = await import("node:zlib"); } catch { zlib = null; } }
@@ -15,13 +20,17 @@ const pipe = async (u8, ts) => {
 };
 const Z = { gzip: ["gzipSync", "gunzipSync"], deflate: ["deflateSync", "inflateSync"], "deflate-raw": ["deflateRawSync", "inflateRawSync"] };
 
+export async function hasZstd() { await probe(); return !!(zlib && typeof zlib.zstdCompressSync === "function"); }
 export async function inflate(u8, format = "deflate") {
 	await probe();
+	if (format === "zstd") { if (!zlib?.zstdDecompressSync) throw new Error("zstd はこの環境では使えない（Node 22.15+ の node:zlib のみ）"); return new Uint8Array(zlib.zstdDecompressSync(u8)); }
 	if (zlib) return new Uint8Array(zlib[Z[format][1]](u8));
 	return pipe(u8, new DecompressionStream(format));
 }
-export async function deflate(u8, format = "gzip") {
+// level: zstd の圧縮レベル（既定 9＝gzip と同程度の時間で半分以下）。gzip/deflate は zlib 既定
+export async function deflate(u8, format = "gzip", level) {
 	await probe();
+	if (format === "zstd") { if (!zlib?.zstdCompressSync) throw new Error("zstd はこの環境では使えない（Node 22.15+ の node:zlib のみ）"); return new Uint8Array(zlib.zstdCompressSync(u8, { params: { [zlib.constants.ZSTD_c_compressionLevel]: level ?? 9 } })); }
 	if (zlib) return new Uint8Array(zlib[Z[format][0]](u8));
 	return pipe(u8, new CompressionStream(format));
 }

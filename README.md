@@ -176,7 +176,13 @@ linearly), `+6` lands on tippecanoe's size, negative values keep more. GDAL's PM
 same job. Lines (Natural Earth 10m roads, 56,600 features / 709k vertices, z0–10): geopbf 10.0 s / 73.8 MB / 108,686 tiles from
 GeoPBF (+2.2 s encode + Gint), tippecanoe 16.2 s / 69.7 MB / 108,682 tiles; every line that reaches a tile edge continues in
 the neighbouring tile (3,001 of 3,001 checked at z8), and the only features tippecanoe keeps that geopbf does not are
-15 small closed loops that the rank filter collapses at z0 (extent ≤ 3 tile units). Points (1,000,000 synthetic, 4 attributes, z0–10): geopbf 14.6 s / 51 MB with the default `dropRate`
+15 small closed loops that the rank filter collapses at z0 (extent ≤ 3 tile units). A large polygon coverage — US Census
+ZCTA5 (TIGER 2010, 33,092 ZIP areas / 52M vertices, 28.9M after Gint folds shared borders), z0–12: geopbf 60.5 s / 322 MB /
+238,322 tiles (byte-identical on re-run), tippecanoe 251 s / 246 MB / 238,319 tiles — the same tile set within 7 tiles and
+indistinguishable in MapLibre at z3/z7/z11; the 31 % size gap is again vertex retention (`lodBias 3` → 272 MB, `6` →
+226 MB). GeoParquet of the same data: 28.5 s / 437 MB with zstd (geopandas 54 s / 542 MB with gzip; geopbf with gzip
+608 MB — Node's zlib is the Chromium fork whose 4-byte hash misses the short matches WKB doubles are full of, 0.73 vs
+0.64 for stock zlib on the same bytes, which is why zstd is the default codec in Node). Points (1,000,000 synthetic, 4 attributes, z0–10): geopbf 14.6 s / 51 MB with the default `dropRate`
 (tippecanoe defaults 31 s / 42 MB), 42 s / 270 MB keeping every point (tippecanoe `-r1` 65 s / 221 MB); GeoParquet
 with STR ordering and the bbox column ≈12 s / 45.6 MB (the Parquet stage itself 7 s, down from 11 s before columns were
 transposed once into contiguous arrays and dictionary-encoded), without the bbox column 21.4 MB (geopandas 4.9 s write /

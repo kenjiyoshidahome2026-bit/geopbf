@@ -191,6 +191,32 @@ print(json.dumps({"rows": t.num_rows, "ok": ok, "enc": enc, "st": st, "rgs": md.
 	}
 }
 
+// ---- zstd コーデックとデータページ分割（pyarrow で読み戻し・値が無圧縮版と一致） ----------------------
+{
+	const { hasZstd } = await import("../src/convert/gzip.js");
+	const rz = await hasZstd() ? await toGeoParquet(pbf, { gpu: false, codec: "zstd", order: "none" }) : null;
+	if (!rz) skip("zstd（この Node に zstdCompressSync が無い）");
+	else { writeFileSync(join(dir, "z.parquet"), rz.buffer); ok(rz.stats.codec === "zstd" && rz.buffer.length < r0.buffer.length, `zstd: ${rz.buffer.length} B < 無圧縮 ${r0.buffer.length} B`); }
+	const rp = await toGeoParquet(pbf, { gpu: false, codec: "none", order: "none", pageSize: 64 });   // 値 64 B 毎にページ＝geometry は 1 行 1 ページ
+	writeFileSync(join(dir, "pages.parquet"), rp.buffer);
+	ok(rp.buffer.length > r0.buffer.length, `pageSize 64: ページヘッダぶん大きい（${rp.buffer.length} > ${r0.buffer.length}）`);
+	const chk = spawnSync("python3", ["-c", `
+import sys, json
+try:
+    import pyarrow.parquet as pq
+except Exception: print("NOPYARROW"); sys.exit(0)
+base = pq.read_table(sys.argv[1]); out = {}
+for name in sys.argv[2:]:
+    try: t = pq.read_table(name); out[name.split("/")[-1]] = t.equals(base)
+    except Exception as e: out[name.split("/")[-1]] = str(e)[:120]
+md = pq.ParquetFile(sys.argv[3]).metadata.row_group(0)
+out["codec"] = md.column(md.num_columns - 5).compression if len(sys.argv) > 3 else None
+print(json.dumps(out))
+`, pqPath, ...(rz ? [join(dir, "z.parquet")] : []), join(dir, "pages.parquet")], { encoding: "utf8" });
+	if (chk.status !== 0 || !chk.stdout || chk.stdout.startsWith("NOPYARROW")) skip("zstd/ページ分割の pyarrow 検定（pyarrow 無し）");
+	else { const o = JSON.parse(chk.stdout); if (rz) ok(o["z.parquet"] === true, `pyarrow: zstd ファイルの内容が一致（${JSON.stringify(o)}）`); ok(o["pages.parquet"] === true, "pyarrow: 複数データページのファイルの内容が一致"); }
+}
+
 // ---- 行グループ分割 -------------------------------------------------------------------------
 const r3 = await toGeoParquet(pbf, { gpu: false, rowGroupSize: 3, order: "none" });
 ok(r3.buffer.length > buf.length, "rowGroupSize=3 で 3 行グループ（footer が大きい）");
