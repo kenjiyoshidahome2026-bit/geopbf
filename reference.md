@@ -184,7 +184,7 @@ Builds a PMTiles v3 archive of Mapbox Vector Tiles from a GeoPBF and its Gint. R
 * **`options.gint`** (ArrayBuffer): the GintBUF. Defaults to `pbf._gintBuffer` (set by `pbf.gint()`); in Node use `bakeGint(pbf)` from `geopbf/convert/node-gint` or the CLI.
 * **`minZoom`** (0) / **`maxZoom`** (14): zoom range. `maxZoom ≤ 32 − log2(extent)` (20 for extent 4096).
 * **`extent`** (4096, power of two) / **`buffer`** (80, tile units): MVT grid and clip buffer.
-* **`layer`**: layer name (default: header `name`). **`lodBias`** (0): added to the rank threshold `63 − 3·(z + log2(extent/256))`; positive keeps fewer vertices.
+* **`layer`**: layer name (default: header `name`). **`lodBias`** (0): added to the rank threshold `63 − 3·(z + log2(extent/256))`; `+3` = one rank step = VW area ×4 (≈2× coarser linearly), positive keeps fewer vertices, negative more. `+6` matches tippecanoe's output size on Natural Earth.
 * **`tileCompression`** (`"gzip"` | `"none"`), **`workers`** (default cores−1, max 8; `0` = inline), **`metadata`** (merged into the PMTiles JSON), **`center`**, **`batchVertices`** (32M: read-back batch size), **`onProgress({ zoom, tiles })`**, **`onWarn(err)`** (worker pool unavailable → inline).
 * **`gpu`**: `false` → CPU; a `GPU` object → use it; omitted → `navigator.gpu` or, in Node, the optional `webgpu` package.
 * `stats`: `{ engine, gpu, workers, vertices, arcs, kept, tiles, contents, bytes, ms: { project_lod, lod_write, assemble, pmtiles, total } }`.

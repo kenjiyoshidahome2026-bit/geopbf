@@ -76,11 +76,14 @@ export function assembleZoom(S, J) {
 	// ── タイル → MVT → 内容キー（同一内容は 1 回だけ持つ。内陸の全面塗り＝1 feature の 4 隅矩形は fid 毎に 1 回だけ符号化）
 	const tiles = [], contents = new Map(), fullCache = new Map();
 	const lo = -buffer, hi = extent + buffer;
+	// 全面塗り＝4 隅が「それぞれ 1 回ずつ」現れ、面積が矩形そのもの。⚠ SH クリップは湾（凹部）の中のタイルに対して
+	// 「縁を往復する面積ゼロの退化片」（例 (hi,lo)(hi,hi)(hi,hi)(hi,lo)）を返す＝隅の個数だけで見ると全面塗りに化ける
+	//（コツェビュー湾が陸になった 2026-09-08）。退化片は符号化側で面積ゼロとして落ちるので、ここは厳密に。
 	const isFullSquare = (rings) => {
 		if (rings.length !== 1 || rings[0].length !== 8) return false;
-		const r = rings[0]; let c = 0;
-		for (let i = 0; i < 8; i += 2) { const x = r[i], y = r[i + 1]; if ((x === lo || x === hi) && (y === lo || y === hi)) c++; }
-		return c === 4 && !(r[0] === r[2] && r[1] === r[3]) && !(r[0] === r[4] && r[1] === r[5]);
+		const r = rings[0]; let mask = 0;
+		for (let i = 0; i < 8; i += 2) { const x = r[i], y = r[i + 1]; if (x === lo && y === lo) mask |= 1; else if (x === hi && y === lo) mask |= 2; else if (x === hi && y === hi) mask |= 4; else if (x === lo && y === hi) mask |= 8; else return false; }
+		return mask === 15 && Math.abs(signedArea2(r)) === 2 * (hi - lo) * (hi - lo);
 	};
 	const keyOf = (data) => {
 		let key = contentKey(data), n = 0, rec = contents.get(key);
@@ -108,7 +111,9 @@ export function assembleZoom(S, J) {
 		for (const [fid, polys] of t.polys) features.push({ id: fid, type: 3, tags: tags[fid], geometry: polys.map(rings => rings.map(local)) });
 		for (const [fid, lines] of t.lines) features.push({ id: fid, type: 2, tags: tags[fid], geometry: lines.map(local) });
 		for (const [fid, pts] of t.points) features.push({ id: fid, type: 1, tags: tags[fid], geometry: local(pts) });
-		tiles.push({ id, key: keyOf(encodeTile({ name: layerName, extent, features })) });
+		const data = encodeTile({ name: layerName, extent, features });
+		if (!data) continue;   // 退化して feature が残らないタイルは書かない
+		tiles.push({ id, key: keyOf(data) });
 	}
 	return { tiles, contents: [...contents] };
 }

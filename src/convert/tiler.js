@@ -17,8 +17,9 @@ import { createPool, defaultWorkers } from "./pool.js";
 import { gzipMany } from "./gzip.js";
 import { assemblePMTiles, sameBytes } from "./pmtiles.js";
 
+// lodBias: 正で閾値を上げる＝残る頂点が減る（3 で VW 面積 4 倍＝線形で 2 倍粗い相当）。負で細かく。
 export function lodThreshold(z, extent, lodBias = 0) {
-	const v = Math.round(63 - 3 * (z + Math.log2(extent / 256)) - lodBias);
+	const v = Math.round(63 - 3 * (z + Math.log2(extent / 256)) + lodBias);
 	return Math.max(0, Math.min(63, v));
 }
 

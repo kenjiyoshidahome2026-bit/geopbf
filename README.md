@@ -123,6 +123,14 @@ Options — `toPMTiles(pbf, { gint, minZoom=0, maxZoom=14, extent=4096, buffer=8
 `toGeoParquet(pbf, { codec:"gzip"|"none", rowGroupSize=65536, bboxColumn=true, geometryName="geometry", gpu })`.
 `gpu: false` forces CPU; a `GPU` object (e.g. from the `webgpu` package) can be passed as `gpu`.
 
+**Against tippecanoe** (v2.82, same 4-core box, same Natural Earth input, z0–10): tippecanoe 58 s / 147 MB / 573,885 tiles;
+geopbf 12.5 s from GeoJSON (encode + Gint + tiles) / 152 MB / 573,906 tiles — the same tiles within a handful, and
+interior tiles are byte-for-byte the same size apart from the layer name and the feature `id` geopbf writes. The 3 % size
+difference is vertex retention: the Gint rank threshold keeps somewhat more coastline vertices at mid zooms than
+tippecanoe's Douglas-Peucker. `lodBias` moves that knob — `+3` raises the threshold by one rank step (≈2× coarser
+linearly), `+6` lands on tippecanoe's size, negative values keep more. GDAL's PMTiles driver (3.12) took 780 s for the
+same job.
+
 ## COG — Cloud Optimized GeoTIFF (`geopbf/cog`)
 
 Rasters, the same way: a COG is a static file read by HTTP Range requests — no tile server,

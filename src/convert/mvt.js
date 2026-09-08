@@ -83,7 +83,7 @@ function geometryCommands(type, parts, g) {
 	return any;
 }
 
-// layer: { name, extent, features: [{ id, type: 1|2|3, tags: [[key, value], …], geometry }] }
+// layer: { name, extent, features: [{ id, type: 1|2|3, tags: [[key, value], …], geometry }] } → Uint8Array | null（feature 無し）
 //   geometry: type1 → number[]（点列）/ type2 → number[][]（線の配列）/ type3 → number[][][]（ポリゴン＝環配列 の配列）
 export function encodeTile(layer) {
 	const L = wLayer.reset();
@@ -99,9 +99,11 @@ export function encodeTile(layer) {
 		let i = m.get(v); if (i === undefined) { i = valList.length; m.set(v, i); valList.push(v); } return i;
 	};
 	const g = [];
+	let written = 0;
 	for (const f of layer.features) {
 		g.length = 0;
 		if (!geometryCommands(f.type, f.geometry, g)) continue;   // 退化して空なら feature ごと書かない
+		written++;
 		const tags = [];
 		for (const [k, v] of f.tags) { if (v === null || v === undefined) continue; tags.push(keyIdx(k), valIdx(v)); }
 		const F = wFeat.reset();
@@ -120,6 +122,7 @@ export function encodeTile(layer) {
 		else V.double(3, v);
 		L.bytes(4, V.sub());
 	}
+	if (!written) return null;   // feature が 1 つも残らないタイルは null（呼び出し側が書かない）
 	L.uint(5, layer.extent);
 	const T = wTile.reset();
 	T.bytes(3, L.sub());
