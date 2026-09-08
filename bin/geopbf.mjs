@@ -30,7 +30,7 @@ const USAGE = `geopbf <command>
        [--layer name]               レイヤ名（既定＝ヘッダの name）
        [--gint <in.gint>]           焼き済み GintBUF を使う（無ければ wasm でその場で焼く）
        [--gpu | --no-gpu]           WebGPU（Node は npm の webgpu＝Dawn が要る）。既定＝あれば使う
-       [--workers N]                組立/クリップ/MVT/gzip の worker 数（既定＝コア数-1・0＝単一スレッド）
+       [--workers N]                組立/クリップ/MVT/gzip の worker 数（既定＝コア数・0＝単一スレッド）
   parquet <in.geopbf> <out.parquet>  GeoPBF を GeoParquet（WKB・bbox 列・gzip）へ
        [--compression gzip|none] [--row-group N] [--gpu | --no-gpu]
 

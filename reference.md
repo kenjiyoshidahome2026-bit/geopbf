@@ -185,7 +185,7 @@ Builds a PMTiles v3 archive of Mapbox Vector Tiles from a GeoPBF and its Gint. R
 * **`minZoom`** (0) / **`maxZoom`** (14): zoom range. `maxZoom ≤ 32 − log2(extent)` (20 for extent 4096).
 * **`extent`** (4096, power of two) / **`buffer`** (80, tile units): MVT grid and clip buffer.
 * **`layer`**: layer name (default: header `name`). **`lodBias`** (0): added to the rank threshold `63 − 3·(z + log2(extent/256))`; `+3` = one rank step = VW area ×4 (≈2× coarser linearly), positive keeps fewer vertices, negative more. `+6` matches tippecanoe's output size on Natural Earth.
-* **`tileCompression`** (`"gzip"` | `"none"`), **`workers`** (default cores−1, max 8; `0` = inline), **`metadata`** (merged into the PMTiles JSON), **`center`**, **`batchVertices`** (32M: read-back batch size), **`onProgress({ zoom, tiles })`**, **`onWarn(err)`** (worker pool unavailable → inline).
+* **`tileCompression`** (`"gzip"` | `"none"`), **`workers`** (default = CPU cores, max 8; `0` = inline; on 4 cores 4 was fastest, 5–7 slightly slower), **`metadata`** (merged into the PMTiles JSON), **`center`**, **`batchVertices`** (32M: read-back batch size), **`onProgress({ zoom, tiles })`**, **`onWarn(err)`** (worker pool unavailable → inline).
 * **`gpu`**: `false` → CPU; a `GPU` object → use it; omitted → `navigator.gpu` or, in Node, the optional `webgpu` package.
 * `stats`: `{ engine, gpu, workers, vertices, arcs, kept, tiles, contents, bytes, ms: { project_lod, lod_write, assemble, pmtiles, total } }`.
 * Semantics: one layer, feature `id` = feature index (fid), polygons follow MVT 2.1 winding (outer positive / holes negative area), shared borders are simplified identically on both sides (one arc), interior full-cover tiles are de-duplicated (content hash + run length).
