@@ -101,8 +101,9 @@ neighbouring polygons are simplified to the *identical* vertex list. No slivers,
 GeoParquet takes the GeoPBF integers directly (no Gint round-trip, so coordinates are exactly the file's values):
 the GPU converts `i / 10^precision` to IEEE-754 doubles by long division with round-to-nearest-even — bit-identical
 to JavaScript's own division — and reduces per-feature bboxes; the CPU assembles WKB and writes Parquet (Thrift
-compact footer, PLAIN pages, RLE definition levels, GZIP, `geo` metadata 1.1 with a `bbox` covering column and
-column statistics). Readable by pyarrow, DuckDB, GDAL, GeoPandas.
+compact footer, PLAIN or dictionary pages, RLE definition levels, GZIP, `geo` metadata 1.1 with a `bbox` covering
+column and min/max/null-count statistics on every column). Low-cardinality columns are dictionary-encoded per row
+group (`RLE_DICTIONARY`, chosen when distinct values are at most half the rows). Readable by pyarrow, DuckDB, GDAL, GeoPandas.
 
 **Exactness is the design rule.** Every kernel is integer-only — the Mercator latitude uses a 2^13·10⁻⁷° table
 with an exact slope column (error ≤ 3 units of 2⁻³²), longitude uses exact 64-bit division emulated in 32-bit —
@@ -158,8 +159,9 @@ tippecanoe's Douglas-Peucker. `lodBias` moves that knob — `+3` raises the thre
 linearly), `+6` lands on tippecanoe's size, negative values keep more. GDAL's PMTiles driver (3.12) took 780 s for the
 same job. Points (1,000,000 synthetic, 4 attributes, z0–10): geopbf 14.6 s / 51 MB with the default `dropRate`
 (tippecanoe defaults 31 s / 42 MB), 42 s / 270 MB keeping every point (tippecanoe `-r1` 65 s / 221 MB); GeoParquet
-with STR ordering and the bbox column 8.5 s / 47 MB, without the bbox column 20 MB (geopandas 4.9 s write / 20.2 MB,
-unsorted, no bbox column).
+with STR ordering and the bbox column ≈12 s / 45.6 MB (the Parquet stage itself 7 s, down from 11 s before columns were
+transposed once into contiguous arrays and dictionary-encoded), without the bbox column 21.4 MB (geopandas 4.9 s write /
+20.2 MB, unsorted, no bbox column).
 
 ## COG — Cloud Optimized GeoTIFF (`geopbf/cog`)
 

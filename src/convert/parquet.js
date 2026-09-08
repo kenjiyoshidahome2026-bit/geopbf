@@ -1,5 +1,6 @@
 // convert/parquet.js ── Apache Parquet の最小ライタ（依存ゼロ）。Thrift compact protocol の FileMetaData / PageHeader を
-// 手書きし、DataPage v1・PLAIN 符号化・definition level は RLE（bit 幅 1）・圧縮は GZIP か無圧縮。
+// 手書きし、DataPage v1・PLAIN か RLE_DICTIONARY（行グループ内の異なり値が半分以下なら辞書ページ＋添字の RLE/bit-packed）・
+// definition level は RLE（bit 幅 1）・全列の min/max/null_count 統計・圧縮は GZIP か無圧縮。
 // 読み手は pyarrow / DuckDB / GDAL / GeoPandas を想定（tests/t-parquet.mjs が pyarrow で読み戻す）。
 //
 // 対応する列型: BOOLEAN / INT64 / DOUBLE / BYTE_ARRAY（UTF8・JSON・生バイト）。
@@ -59,13 +60,19 @@ function encodeDefLevels(levels) {
 	return out;
 }
 
+// BYTE_ARRAY の値 → バイト列（文字列は UTF-8・Uint8Array はそのまま）
+const enc = new TextEncoder();
+const toBytes = (v) => v instanceof Uint8Array ? v : enc.encode(String(v));
+// 符号なしバイト列の辞書順比較
+function cmpBytes(a, b) { const n = Math.min(a.length, b.length); for (let i = 0; i < n; i++) if (a[i] !== b[i]) return a[i] - b[i]; return a.length - b.length; }
+
 // 値の PLAIN 符号化。vals: 非 null の値だけ（順序保持）
 function encodeValues(type, vals) {
 	if (type === PT.BOOLEAN) { const out = new Uint8Array((vals.length + 7) >> 3); for (let i = 0; i < vals.length; i++) if (vals[i]) out[i >> 3] |= 1 << (i & 7); return out; }
 	if (type === PT.DOUBLE) { const out = new Uint8Array(vals.length * 8), dv = new DataView(out.buffer); for (let i = 0; i < vals.length; i++) dv.setFloat64(i * 8, vals[i], true); return out; }
 	if (type === PT.INT64) { const out = new Uint8Array(vals.length * 8), dv = new DataView(out.buffer); for (let i = 0; i < vals.length; i++) { const v = vals[i], hi = Math.floor(v / 4294967296); dv.setUint32(i * 8, v - hi * 4294967296, true); dv.setInt32(i * 8 + 4, hi, true); } return out; }
 	if (type === PT.BYTE_ARRAY) {
-		const enc = new TextEncoder(), bs = vals.map(v => v instanceof Uint8Array ? v : enc.encode(String(v)));
+		const bs = vals.map(toBytes);
 		let n = 0; for (const b of bs) n += 4 + b.length;
 		const out = new Uint8Array(n), dv = new DataView(out.buffer); let p = 0;
 		for (const b of bs) { dv.setUint32(p, b.length, true); out.set(b, p + 4); p += 4 + b.length; }
@@ -74,8 +81,68 @@ function encodeValues(type, vals) {
 	throw new Error("parquet: unsupported type " + type);
 }
 const le8 = (v) => { const u = new Uint8Array(8); new DataView(u.buffer).setFloat64(0, v, true); return u; };
+const le8i = (v) => { const u = new Uint8Array(8), hi = Math.floor(v / 4294967296); const dv = new DataView(u.buffer); dv.setUint32(0, v - hi * 4294967296, true); dv.setInt32(4, hi, true); return u; };
 
-// columns: [{ path: ["a"] | ["bbox","xmin"], type: PT.*, get(row) → 値 | null, stats?: true（DOUBLE の min/max）}]
+// Parquet の RLE/bit-packed hybrid（辞書添字用）。同値が 8 個以上続く区間は RLE run、それ以外は 8 個単位の bit-packed。
+// idx: 添字列（n 個）、w: ビット幅（1..32）。戻り: [w の 1 バイト] ＋ run 列
+function encodeHybrid(idx, n, w) {
+	const out = new TWriter(64 + ((n * w) >> 3));
+	out.byte(w);
+	const bytesPerVal = (w + 7) >> 3;
+	let i = 0;
+	while (i < n) {
+		let j = i + 1; while (j < n && idx[j] === idx[i]) j++;
+		if (j - i >= 8) { out.varint((j - i) * 2); let v = idx[i]; for (let b = 0; b < bytesPerVal; b++) { out.byte(v % 256); v = Math.floor(v / 256); } i = j; continue; }
+		let k = j;   // run にならない区間 [i, k) を集める（次の 8 個以上の run の手前まで）
+		while (k < n) { let m = k + 1; while (m < n && idx[m] === idx[k]) m++; if (m - k >= 8) break; k = m; }
+		// 8 の倍数に切り上げ（途中なら次の run から借りる・末尾なら 0 詰め）
+		const cnt = k < n ? Math.min(n - i, (k - i + 7) & ~7) : k - i, groups = Math.ceil(cnt / 8);
+		out.varint(groups * 2 + 1);
+		let acc = 0, nb = 0;
+		for (let p = 0; p < groups * 8; p++) {
+			const v = i + p < n ? idx[i + p] : 0;
+			acc += v * Math.pow(2, nb); nb += w;
+			while (nb >= 8) { out.byte(acc % 256); acc = Math.floor(acc / 256); nb -= 8; }
+		}
+		i += cnt;
+	}
+	return out.finish().slice();
+}
+
+// 行グループ内の辞書化：異なり値が半分以下（先頭 4096 個で 2048 を超えたら諦める）で辞書が 1 MB 以下なら { dict, idx }
+function tryDictionary(type, vals) {
+	const n = vals.length;
+	if (n < 2) return null;
+	const map = new Map(), dict = [], idx = new Uint32Array(n);
+	for (let i = 0; i < n; i++) {
+		const v = vals[i];
+		let d = map.get(v);
+		if (d === undefined) { d = dict.length; map.set(v, d); dict.push(v); if ((i === 4095 && d > 2047) || d > (n >> 1)) return null; }
+		idx[i] = d;
+	}
+	if (dict.length > (n >> 1)) return null;
+	if (type === PT.BYTE_ARRAY) { let bytes = 0; for (const v of dict) bytes += 4 + toBytes(v).length; if (bytes > (1 << 20)) return null; }
+	return { dict, idx };
+}
+
+// 列の統計（min/max のバイト表現）。BYTE_ARRAY は符号なしバイト列の辞書順・128 B を超える値があれば統計なし
+function statsOf(type, vals) {
+	if (!vals.length) return null;
+	if (type === PT.BYTE_ARRAY) {
+		let mn = null, mx = null;
+		for (const v of vals) { const b = toBytes(v); if (b.length > 128) return null; if (mn === null || cmpBytes(b, mn) < 0) mn = b; if (mx === null || cmpBytes(b, mx) > 0) mx = b; }
+		return { min: mn, max: mx };
+	}
+	let mn = Infinity, mx = -Infinity;
+	for (const v of vals) { const x = +v; if (x !== x) continue; if (x < mn) mn = x; if (x > mx) mx = x; }
+	if (mn === Infinity) return null;
+	if (type === PT.BOOLEAN) return { min: new Uint8Array([mn ? 1 : 0]), max: new Uint8Array([mx ? 1 : 0]) };
+	if (type === PT.INT64) return { min: le8i(mn), max: le8i(mx) };
+	return { min: le8(mn), max: le8(mx) };
+}
+
+// columns: [{ path: ["a"] | ["bbox","xmin"], type: PT.*, values?: 配列（行順）| get(row) → 値 | null,
+//            stats?: false で統計を省く（既定＝全列）, dict?: false で辞書化しない（幾何の WKB など）}]
 // opts: { rowGroupSize=65536, codec:"gzip"|"none", keyValue: {k: v}, createdBy, compress?: async (u8)=>u8 }
 export async function writeParquet({ schema, columns, numRows }, opts = {}) {
 	const rowGroupSize = opts.rowGroupSize ?? 65536, codecName = opts.codec ?? "gzip", codec = CODEC[codecName];
@@ -89,30 +156,42 @@ export async function writeParquet({ schema, columns, numRows }, opts = {}) {
 		const n = Math.min(rowGroupSize, numRows - r0), chunks = [];
 		let totalBytes = 0, totalComp = 0;
 		for (const col of columns) {
-			const levels = new Uint8Array(n), vals = [];
-			let min = Infinity, max = -Infinity, nulls = 0;
+			const levels = new Uint8Array(n), vals = [], src = col.values;
+			let nulls = 0;
 			for (let i = 0; i < n; i++) {
-				const v = col.get(r0 + i);
+				const v = src ? src[r0 + i] : col.get(r0 + i);
 				if (v === null || v === undefined) { nulls++; continue; }
 				levels[i] = 1; vals.push(v);
-				if (col.stats) { if (v < min) min = v; if (v > max) max = v; }
 			}
-			const lv = encodeDefLevels(levels), vb = encodeValues(col.type, vals);
-			const raw = new Uint8Array(lv.length + vb.length); raw.set(lv, 0); raw.set(vb, lv.length);
-			const comp = await compress(raw);
-			// PageHeader
-			const ph = new TWriter(64);
-			ph.structBegin();
-			ph.i32(1, 0);                      // DATA_PAGE
-			ph.i32(2, raw.length); ph.i32(3, comp.length);
-			ph.struct(5); ph.i32(1, n); ph.i32(2, 0); ph.i32(3, 3); ph.i32(4, 3); ph.structEnd();   // DataPageHeader: num_values, PLAIN, RLE, RLE
-			ph.structEnd();
-			const phb = ph.finish().slice();
-			const pageOff = fileOff;
-			parts.push(phb, comp); fileOff += phb.length + comp.length;
-			const unc = phb.length + raw.length, cmp = phb.length + comp.length;
+			const st = col.stats === false ? null : statsOf(col.type, vals);
+			const lv = encodeDefLevels(levels);
+			const dic = col.dict === false || col.type === PT.BOOLEAN ? null : tryDictionary(col.type, vals);
+			let unc = 0, cmp = 0, dictOff = null;
+			const page = async (kind, body, numValues, encoding) => {   // ページを書き、(unc, cmp) を積む
+				const comp = await compress(body);
+				const ph = new TWriter(64);
+				ph.structBegin();
+				ph.i32(1, kind);                   // 0 DATA_PAGE / 2 DICTIONARY_PAGE
+				ph.i32(2, body.length); ph.i32(3, comp.length);
+				if (kind === 0) { ph.struct(5); ph.i32(1, numValues); ph.i32(2, encoding); ph.i32(3, 3); ph.i32(4, 3); ph.structEnd(); }   // DataPageHeader: num_values, encoding, RLE, RLE
+				else { ph.struct(7); ph.i32(1, numValues); ph.i32(2, 0); ph.bool(3, false); ph.structEnd(); }                         // DictionaryPageHeader: num_values, PLAIN, is_sorted
+				ph.structEnd();
+				const phb = ph.finish().slice(), off = fileOff;
+				parts.push(phb, comp); fileOff += phb.length + comp.length;
+				unc += phb.length + body.length; cmp += phb.length + comp.length;
+				return off;
+			};
+			if (dic) {
+				dictOff = await page(2, encodeValues(col.type, dic.dict), dic.dict.length, 0);
+				const w = Math.max(1, Math.ceil(Math.log2(dic.dict.length))), hb = encodeHybrid(dic.idx, vals.length, w);
+				const raw = new Uint8Array(lv.length + hb.length); raw.set(lv, 0); raw.set(hb, lv.length);
+				var pageOff = await page(0, raw, n, 8);   // RLE_DICTIONARY
+			} else {
+				const vb = encodeValues(col.type, vals), raw = new Uint8Array(lv.length + vb.length); raw.set(lv, 0); raw.set(vb, lv.length);
+				var pageOff = await page(0, raw, n, 0);   // PLAIN
+			}
 			totalBytes += unc; totalComp += cmp;
-			chunks.push({ col, pageOff, unc, cmp, n, nulls, min, max, hasStats: col.stats && vals.length > 0 });
+			chunks.push({ col, pageOff, dictOff, unc, cmp, n, nulls, st });
 		}
 		rowGroups.push({ chunks, n, totalBytes, totalComp });
 	}
@@ -128,19 +207,21 @@ export async function writeParquet({ schema, columns, numRows }, opts = {}) {
 		w.list(1, CT.STRUCT, rg.chunks.length);
 		for (const c of rg.chunks) {
 			w.structBegin();
-			w.i64(2, c.pageOff);                                  // file_offset
+			w.i64(2, c.dictOff ?? c.pageOff);                     // file_offset
 			w.struct(3);                                          // ColumnMetaData
 			w.i32(1, c.col.type);
-			w.list(2, CT.I32, 2); w.zig(0); w.zig(3);             // encodings: PLAIN, RLE
+			if (c.dictOff !== null) { w.list(2, CT.I32, 3); w.zig(0); w.zig(3); w.zig(8); }   // encodings: PLAIN, RLE, RLE_DICTIONARY
+			else { w.list(2, CT.I32, 2); w.zig(0); w.zig(3); }                               // PLAIN, RLE
 			w.list(3, CT.BINARY, c.col.path.length); for (const s of c.col.path) w.rawBinary(new TextEncoder().encode(s));
 			w.i32(4, codec);
 			w.i64(5, c.n);
 			w.i64(6, c.unc); w.i64(7, c.cmp);
 			w.i64(9, c.pageOff);                                  // data_page_offset
-			if (c.hasStats || c.nulls) {                          // Statistics
+			if (c.dictOff !== null) w.i64(11, c.dictOff);         // dictionary_page_offset
+			if (c.st || c.nulls) {                                // Statistics
 				w.struct(12);
 				w.i64(3, c.nulls);
-				if (c.hasStats) { w.binary(5, le8(c.max)); w.binary(6, le8(c.min)); }
+				if (c.st) { w.binary(5, c.st.max); w.binary(6, c.st.min); }
 				w.structEnd();
 			}
 			w.structEnd();

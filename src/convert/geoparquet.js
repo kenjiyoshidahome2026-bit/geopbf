@@ -94,13 +94,13 @@ const CRS84 = { "$schema": "https://proj.org/schemas/v0.7/projjson.schema.json",
 
 // 属性列の推定: GeoPBF の keys（"a.b" 平坦化済み）× 全行の値の型
 function inferColumns(pbf, keep = null) {
-	const rows = pbf.propertiesTable.slice(1), keys = pbf.keys;
+	const rows = pbf.props ?? pbf.propertiesTable.slice(1), keys = pbf.keys;
 	const cols = [];
 	keys.forEach((key, ki) => {
 		if (keep && !keep(key)) return;
 		let kinds = 0, any = false;   // 1 bool / 2 int / 4 float / 8 string / 16 date / 32 other(json) / 64 skip(blob 等)
 		for (const row of rows) {
-			const v = row[ki];
+			const v = row?.[ki];
 			if (v === null || v === undefined) continue;
 			any = true;
 			const t = typeof v;
@@ -117,7 +117,7 @@ function inferColumns(pbf, keep = null) {
 		else if (kinds === 16) { type = PT.INT64; logical = "TIMESTAMP_MILLIS"; conv = v => +v; }
 		else { type = PT.BYTE_ARRAY; logical = (kinds & ~32) === 0 ? "JSON" : "UTF8"; conv = v => typeof v === "string" ? v : v instanceof Date ? v.toISOString() : (typeof v === "object" && !(ArrayBuffer.isView(v))) ? JSON.stringify(v) : ArrayBuffer.isView(v) ? JSON.stringify(Array.from(v)) : String(v); }
 		const skip = (v) => v === null || v === undefined || typeof v === "function" || (typeof Blob !== "undefined" && v instanceof Blob) || (typeof ImageData !== "undefined" && v instanceof ImageData) || (typeof v === "number" && !Number.isFinite(v));
-		cols.push({ name: key, type, logical, get: (i) => { const v = rows[i][ki]; return skip(v) ? null : conv(v); } });
+		cols.push({ name: key, type, logical, ki, val: (row) => { const v = row?.[ki]; return skip(v) ? null : conv(v); } });
 	});
 	return cols;
 }
@@ -208,16 +208,26 @@ export async function toGeoParquet(pbf, opts = {}) {
 	if (!["str", "hilbert", "morton", "none"].includes(order)) throw new Error(`order は str|hilbert|morton|none（${order}）`);
 	const rowGroupSize = opts.rowGroupSize ?? 65536;
 	const perm = spatialOrder(order, bb, (i) => !!wkb[i], pbf.length, rowGroupSize);
-	const row = perm ? (i) => perm[i] : (i) => i;
 	const props = inferColumns(pbf, attrFilter(opts));
+	// ── 列を並べ替え順に転置して連続配列へ（行→列の 1 回の走査。ライタが行毎に perm を引いて行配列を辿る間接参照を消す）
+	const tt = now();
+	const N = pbf.length, rows = pbf.props ?? pbf.propertiesTable.slice(1);
+	const colVals = props.map(() => new Array(N)), wkbS = new Array(N), bboxS = withBbox ? [new Array(N), new Array(N), new Array(N), new Array(N)] : null;
+	for (let i = 0; i < N; i++) {
+		const j = perm ? perm[i] : i, row = rows[j], g = wkb[j];
+		for (let c = 0; c < props.length; c++) colVals[c][i] = props[c].val(row);
+		wkbS[i] = g;
+		if (bboxS) for (let k = 0; k < 4; k++) bboxS[k][i] = g ? bbox[j * 4 + k] : null;
+	}
+	stats.ms.transpose = now() - tt;
 	const schema = [{ name: "schema", numChildren: props.length + 1 + (withBbox ? 1 : 0) }];
 	const columns = [];
-	for (const c of props) { schema.push({ name: c.name, type: c.type, repetition: REP.OPTIONAL, logical: c.logical }); columns.push({ path: [c.name], type: c.type, get: (i) => c.get(row(i)) }); }
+	props.forEach((c, ci) => { schema.push({ name: c.name, type: c.type, repetition: REP.OPTIONAL, logical: c.logical }); columns.push({ path: [c.name], type: c.type, values: colVals[ci] }); });
 	schema.push({ name: gname, type: PT.BYTE_ARRAY, repetition: REP.OPTIONAL });
-	columns.push({ path: [gname], type: PT.BYTE_ARRAY, get: (i) => wkb[row(i)] });
+	columns.push({ path: [gname], type: PT.BYTE_ARRAY, values: wkbS, stats: false, dict: false });
 	if (withBbox) {
 		schema.push({ name: "bbox", repetition: REP.OPTIONAL, numChildren: 4 });
-		["xmin", "ymin", "xmax", "ymax"].forEach((n, k) => { schema.push({ name: n, type: PT.DOUBLE, repetition: REP.REQUIRED }); columns.push({ path: ["bbox", n], type: PT.DOUBLE, stats: true, get: (i) => { const j = row(i); return wkb[j] ? bbox[j * 4 + k] : null; } }); });
+		["xmin", "ymin", "xmax", "ymax"].forEach((n, k) => { schema.push({ name: n, type: PT.DOUBLE, repetition: REP.REQUIRED }); columns.push({ path: ["bbox", n], type: PT.DOUBLE, values: bboxS[k], dict: false }); });
 	}
 	const geo = { version: "1.1.0", primary_column: gname, columns: { [gname]: {
 		encoding: "WKB", geometry_types: [...types].sort(), crs: CRS84,

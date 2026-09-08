@@ -162,6 +162,35 @@ print(json.dumps(out))
 	names(ri);
 }
 
+// ---- 辞書符号化と全列の統計（pyarrow で読み戻し）-------------------------------------------------
+{
+	// cat: 3 値（run 多め＝RLE run）・alt: 2 値が交互（bit-packed）・cnt: 整数 5 値・uniq: 全て異なる（PLAIN のまま）・some: 後半だけ null
+	const N = 1000, feats = Array.from({ length: N }, (_, i) => ({ type: "Feature", properties: { cat: ["bus", "駅", "café"][Math.floor(i / 100) % 3], alt: i % 2 ? "b" : "a", cnt: i % 5, uniq: "u" + i, some: i < 300 ? i * 0.5 : null, flag: i % 3 === 0 }, geometry: { type: "Point", coordinates: [i % 100, Math.floor(i / 100)] } }));
+	const pp = await new GeoPBF({ name: "d", precision: 3 }).set({ type: "FeatureCollection", features: feats });
+	const rd = await toGeoParquet(pp, { gpu: false, codec: "none", order: "none", rowGroupSize: 400, bboxColumn: false });
+	writeFileSync(join(dir, "dict.parquet"), rd.buffer);
+	const chk = spawnSync("python3", ["-c", `
+import json, sys
+try:
+    import pyarrow.parquet as pq
+except Exception:
+    print("NOPYARROW"); sys.exit(0)
+pf = pq.ParquetFile(sys.argv[1]); md = pf.metadata; t = pf.read(); rows = t.to_pylist()
+ci = {md.row_group(0).column(i).path_in_schema: i for i in range(md.num_columns)}
+enc = {k: list(md.row_group(0).column(i).encodings) for k, i in ci.items()}
+st = {k: (lambda s: [s.min, s.max, s.null_count] if s and s.has_min_max else None)(md.row_group(2).column(i).statistics) for k, i in ci.items()}
+ok = all(r["cat"] == ["bus", "駅", "café"][(i // 100) % 3] and r["alt"] == ("b" if i % 2 else "a") and r["cnt"] == i % 5 and r["uniq"] == "u%d" % i and r["some"] == (i * 0.5 if i < 300 else None) and r["flag"] == (i % 3 == 0) for i, r in enumerate(rows))
+print(json.dumps({"rows": t.num_rows, "ok": ok, "enc": enc, "st": st, "rgs": md.num_row_groups}, default=str))
+`, join(dir, "dict.parquet")], { encoding: "utf8" });
+	if (chk.status !== 0 || !chk.stdout || chk.stdout.startsWith("NOPYARROW")) skip("辞書符号化の検定（pyarrow 無し）" + (chk.stderr || "").split("\n")[0]);
+	else {
+		const o = JSON.parse(chk.stdout);
+		ok(o.rows === N && o.ok && o.rgs === 3, `辞書符号化: pyarrow で全 ${N} 行の値が一致（3 行グループ）`);
+		ok(o.enc.cat.includes("RLE_DICTIONARY") && o.enc.alt.includes("RLE_DICTIONARY") && o.enc.cnt.includes("RLE_DICTIONARY") && !o.enc.uniq.includes("RLE_DICTIONARY") && !o.enc.flag.includes("RLE_DICTIONARY") && !o.enc.geometry.includes("RLE_DICTIONARY"), `辞書符号化: 低カーディナリティ列だけ RLE_DICTIONARY ${JSON.stringify(o.enc)}`);
+		ok(o.st.cat[0] === "bus" && o.st.cat[1] === "café" && o.st.cnt[0] === 0 && o.st.cnt[1] === 4 && o.st.uniq[0] === "u800" && o.st.uniq[1] === "u999" && o.st.some === null && o.st.geometry === null, `統計: 3 番目の行グループの min/max（文字列はバイト順・全 null 列と幾何は無し）${JSON.stringify(o.st)}`);
+	}
+}
+
 // ---- 行グループ分割 -------------------------------------------------------------------------
 const r3 = await toGeoParquet(pbf, { gpu: false, rowGroupSize: 3, order: "none" });
 ok(r3.buffer.length > buf.length, "rowGroupSize=3 で 3 行グループ（footer が大きい）");
