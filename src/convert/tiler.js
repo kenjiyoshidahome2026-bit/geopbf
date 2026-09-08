@@ -48,7 +48,8 @@ export function propsToTags(props, fields) {
 }
 
 // pbf: GeoPBF（属性・ヘッダ用）。opts.gint: GintBUF（ArrayBuffer）。無ければ pbf._gintBuffer（pbf.gint() 後）。
-// opts.workers: worker 数（0＝インライン・既定＝コア数-1・最大 8）
+// opts.workers: worker 数（0＝インライン・既定＝コア数・最大 8）
+// opts.dropRate: 点の低ズーム間引き率（tippecanoe の -r 相当・既定 2.5＝1 ズーム下がる毎に 1/2.5・1 で全点保持。面/線には効かない）
 export async function toPMTiles(pbf, opts = {}) {
 	const t0 = now();
 	const gintBuf = opts.gint ?? pbf._gintBuffer;
@@ -92,16 +93,23 @@ export async function toPMTiles(pbf, opts = {}) {
 	const zoomTotal = (k) => (k + 1 < zoomCount ? offsets[(k + 1) * A] : total) - offsets[k * A];
 
 	// ── 属性 → tags（fid 毎に 1 回・worker へは配列で 1 回送る）
+	const tt = now();
 	const fields = new Map();
 	const tags = new Array(pbf.length);
 	for (let i = 0; i < pbf.length; i++) tags[i] = propsToTags(pbf.getProperties(i), fields);
-	const S = { arcCount: d.arcCount, nPts, point: d.point ? d.point.slice() : null, polyStream: d.polyStream ? d.polyStream.slice() : null, lineStream: d.lineStream ? d.lineStream.slice() : null, extent, buffer, layerName, tags };
+	stats.ms.tags = now() - tt;
+	const dropRate = opts.dropRate ?? 2.5;
+	if (!(dropRate >= 1)) throw new Error("dropRate は 1 以上（1＝点を間引かない）");
+	const S = { arcCount: d.arcCount, nPts, point: d.point ? d.point.slice() : null, polyStream: d.polyStream ? d.polyStream.slice() : null, lineStream: d.lineStream ? d.lineStream.slice() : null, extent, buffer, layerName, tags, maxZoom, dropRate };
 
 	// ── worker プール（失敗したらインライン）
 	let pool = null;
 	const NW = opts.workers ?? await defaultWorkers();
-	if (NW > 0) { try { pool = await createPool(NW); await pool.init(S); } catch (e) { pool = null; opts.onWarn?.(e); } }
+	const ti = now();
+	// tags（fid 毎の [[k,v],…]）は構造化クローンだと 100 万件で worker あたり 3 秒＝JSON 文字列 1 本で渡し worker 側で parse
+	if (NW > 0) { try { pool = await createPool(NW); await pool.init({ ...S, tags: null, tagsJson: JSON.stringify(tags) }); } catch (e) { pool = null; opts.onWarn?.(e); } }
 	stats.workers = pool ? NW : 0;
+	stats.ms.pool_init = now() - ti;
 
 	// ── 結果の寄せ集め（内容キーで重複統合・同キー異内容は枝番）
 	const items = [], contents = new Map();

@@ -39,7 +39,7 @@ const gint = await bakeGint(pbf);
 ok(gint instanceof ArrayBuffer && gint.byteLength > 64, `gint を wasm で焼く（${gint.byteLength} B）`);
 
 // ---- 変換（CPU 明示）------------------------------------------------------------------
-const r = await toPMTiles(pbf, { gint, gpu: false, minZoom: 0, maxZoom: 9 });
+const r = await toPMTiles(pbf, { gint, gpu: false, minZoom: 0, maxZoom: 9, dropRate: 1 });
 ok(r.stats.engine === "cpu" && r.buffer.length > 127, `toPMTiles: ${r.stats.tiles} タイル・${r.buffer.length} B・engine=${r.stats.engine}`);
 const pm = await readPMTiles(r.buffer);
 const h = pm.header;
@@ -100,15 +100,32 @@ let threw = false; try { await toPMTiles(pbf, { gint, gpu: false, extent: 1000 }
 threw = false; try { await toPMTiles(pbf, { gint, gpu: false, maxZoom: 21 }); } catch { threw = true; } ok(threw, "extent 4096 で maxZoom > 20 は例外");
 threw = false; try { await toPMTiles(pbf, { gpu: false }); } catch { threw = true; } ok(threw, "gint が無ければ例外");
 // extent 512 / 無圧縮
-const r2 = await toPMTiles(pbf, { gint, gpu: false, minZoom: 2, maxZoom: 4, extent: 512, tileCompression: "none", layer: "L2" });
+const r2 = await toPMTiles(pbf, { gint, gpu: false, minZoom: 2, maxZoom: 4, extent: 512, tileCompression: "none", layer: "L2", dropRate: 1 });
 const pm2 = await readPMTiles(r2.buffer);
 ok(pm2.header.tc === 1 && pm2.header.minZoom === 2 && decodeTile(await pm2.getTile(2, 2, 1))[0].extent === 512 && decodeTile(await pm2.getTile(2, 2, 1))[0].name === "L2", "extent 512・無圧縮・レイヤ名");
+
+// 点の間引き（dropRate）: 多数の点で z0 は疎・maxZoom は全点・残る点は入れ子
+{
+	const pts = { type: "FeatureCollection", features: Array.from({ length: 2000 }, (_, i) => ({ type: "Feature", properties: { i }, geometry: { type: "Point", coordinates: [10 + (i % 50) * 0.01, 10 + Math.floor(i / 50) * 0.01] } })) };
+	const pp = await new GeoPBF({ name: "pts", precision: 6 }).set(structuredClone(pts));
+	const pg = await bakeGint(pp);
+	const rp = await toPMTiles(pp, { gint: pg, gpu: false, minZoom: 0, maxZoom: 6, dropRate: 2.5 });
+	const pmp = await readPMTiles(rp.buffer);
+	const at = async (z, x, y) => { const t = await pmp.getTile(z, x, y); return t ? decodeTile(t)[0].features : []; };
+	const z0 = await at(0, 0, 0), z6 = [];
+	for (const e of pmp.root) for (let k = 0; k < e.runLength; k++) { const [z, x, y] = (await import("../src/convert/pmtiles.js")).tileIdToZxy(e.tileId + k); if (z === 6) z6.push(...await at(z, x, y)); }
+	const ids6 = new Set(z6.map(f => f.id)), ids0 = new Set(z0.map(f => f.id));
+	ok(ids6.size === 2000, `dropRate: maxZoom には全点（${ids6.size}）`);
+	ok(z0.length > 0 && z0.length < 2000 / 50 && [...ids0].every(i => ids6.has(i)), `dropRate 2.5: z0 は 2.5^-6≈0.4% ＝ ${z0.length} 点（入れ子）`);
+	const rp1 = await toPMTiles(pp, { gint: pg, gpu: false, minZoom: 0, maxZoom: 6, dropRate: 1 });
+	ok(decodeTile(await (await readPMTiles(rp1.buffer)).getTile(0, 0, 0))[0].features.length === 2000, "dropRate 1: z0 にも全点");
+}
 
 // ---- CLI ---------------------------------------------------------------------------------
 const CLI = new URL("../bin/geopbf.mjs", import.meta.url).pathname, dir = mkdtempSync(join(tmpdir(), "geopbf-pmt-"));
 const run = (...args) => execFileSync(process.execPath, [CLI, ...args], { encoding: "utf8" });
 const inPath = join(dir, "fix.geopbf"); writeFileSync(inPath, gzipSync(Buffer.from(pbf.arrayBuffer)));
-const out = run("pmtiles", inPath, join(dir, "fix.pmtiles"), "--maxzoom", "5", "--no-gpu");
+const out = run("pmtiles", inPath, join(dir, "fix.pmtiles"), "--maxzoom", "5", "--no-gpu", "--drop-rate", "1");
 ok(/タイル [\d,]+/.test(out) && /CPU/.test(out), "CLI pmtiles: 実行報告（タイル数・エンジン）");
 const cliPm = await readPMTiles(new Uint8Array(readFileSync(join(dir, "fix.pmtiles"))));
 ok(cliPm.header.maxZoom === 5 && decodeTile(await cliPm.getTile(0, 0, 0))[0].features.length === 7, "CLI pmtiles: 出力が読める（gzip GeoPBF 入力・gint はその場で焼く）");

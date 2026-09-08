@@ -107,6 +107,13 @@ else {
 	ok(o.created === "geopbf" && o.kv.includes("geopbf:attribution"), "pyarrow: created_by と geopbf:attribution");
 }
 
+// ---- 点だけのデータは bbox 列を省く（auto）----
+{
+	const pp = await new GeoPBF({ name: "p" }).set({ type: "FeatureCollection", features: [{ type: "Feature", properties: { a: 1 }, geometry: { type: "Point", coordinates: [1, 2] } }] });
+	const ra = await toGeoParquet(pp, { gpu: false, codec: "none" }), rb = await toGeoParquet(pp, { gpu: false, codec: "none", bboxColumn: true });
+	ok(!ra.geo.columns.geometry.covering && rb.geo.columns.geometry.covering && ra.buffer.length < rb.buffer.length, "点だけのデータは bbox 列を省く（bboxColumn:true で強制）");
+}
+
 // ---- 行グループ分割 -------------------------------------------------------------------------
 const r3 = await toGeoParquet(pbf, { gpu: false, rowGroupSize: 3 });
 ok(r3.buffer.length > buf.length, "rowGroupSize=3 で 3 行グループ（footer が大きい）");

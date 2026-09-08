@@ -80,15 +80,36 @@ export function assembleZoom(S, J) {
 			splitToTiles([line], 1, lb, z, extent, buffer, (tx, ty, parts) => { const t = tileOf(tx, ty); let l = t.lines.get(fid); if (!l) t.lines.set(fid, l = []); for (const q of parts) l.push(q); }, txRange);
 		}
 	}
-	// 点（fid 毎に束ねて MultiPoint）
+	// 点：クリップ木を通さず、タイル座標のシフトで直接タイルへ振り分ける（バッファ帯は隣接タイルにも複製）。
+	// 低ズームの間引き＝tippecanoe の -r と同じ考え方：z < maxZoom では fid のハッシュで dropRate^-(maxZoom-z) の割合だけ残す
+	//（閾値がズームで単調＝残る点はズームを上げても消えない入れ子集合）。dropRate 1 で全点保持。
+	const pointTiles = new Map();   // tile key → Map(fid → [x,y,…]) （fid 毎に束ねて MultiPoint）
 	if (nPts) {
-		const byFid = new Map();
-		for (let i = 0; i < nPts; i++) { const a = arcCount + i; if (!counts[a]) continue; const o = offs[a]; const fid = point[i]; let l = byFid.get(fid); if (!l) byFid.set(fid, l = []); l.push(out[o * 2], out[o * 2 + 1]); }
-		for (const [fid, pts] of byFid) {
-			let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
-			for (let i = 0; i < pts.length; i += 2) { if (pts[i] < bx0) bx0 = pts[i]; if (pts[i] > bx1) bx1 = pts[i]; if (pts[i + 1] < by0) by0 = pts[i + 1]; if (pts[i + 1] > by1) by1 = pts[i + 1]; }
-			splitToTiles(pts, 0, [bx0, by0, bx1, by1], z, extent, buffer, (tx, ty, parts) => { const t = tileOf(tx, ty); const l = t.points.get(fid); if (l) l.push(...parts); else t.points.set(fid, parts.slice()); }, txRange);
+		const maxZoom = S.maxZoom ?? z, rate = S.dropRate ?? 1;
+		const keepFrac = rate > 1 && z < maxZoom ? Math.pow(rate, -(maxZoom - z)) : 1;
+		const keepMax = Math.floor(keepFrac * 4294967296);
+		const nmaxT = (1 << z) - 1;
+		const put = (tx, ty, fid, x, y) => {
+			if (tx < txRange[0] || tx > txRange[1] || tx < 0 || tx > nmaxT || ty < 0 || ty > nmaxT) return;
+			const key = tx * 4294967296 + ty;
+			let m = pointTiles.get(key); if (!m) pointTiles.set(key, m = new Map());
+			const l = m.get(fid); if (l) l.push(x, y); else m.set(fid, [x, y]);
+		};
+		for (let i = 0; i < nPts; i++) {
+			const a = arcCount + i;
+			if (!counts[a]) continue;
+			const fid = point[i];
+			if (keepFrac < 1 && (Math.imul(fid + 1, 0x9E3779B1) >>> 0) >= keepMax) continue;
+			const o = offs[a], x = out[o * 2], y = out[o * 2 + 1];
+			const tx = Math.floor(x / extent), ty = Math.floor(y / extent), lx = x - tx * extent, ly = y - ty * extent;
+			put(tx, ty, fid, x, y);
+			const dx = lx < buffer ? -1 : lx >= extent - buffer ? 1 : 0, dy = ly < buffer ? -1 : ly >= extent - buffer ? 1 : 0;
+			if (dx) put(tx + dx, ty, fid, x, y);
+			if (dy) put(tx, ty + dy, fid, x, y);
+			if (dx && dy) put(tx + dx, ty + dy, fid, x, y);
 		}
+		for (const [key, m] of pointTiles) { const t = tileOf(Math.floor(key / 4294967296), key % 4294967296); for (const [fid, pts] of m) t.points.set(fid, pts); }
+		pointTiles.clear();
 	}
 	// ── 全面塗り範囲：他の geometry が無いタイルは fid 毎の正準タイル（後段で 1 回だけ符号化）、あるタイルは矩形として合流
 	const lo = -buffer, hi = extent + buffer, square = [lo, lo, hi, lo, hi, hi, lo, hi];

@@ -31,6 +31,7 @@ const USAGE = `geopbf <command>
        [--gint <in.gint>]           焼き済み GintBUF を使う（無ければ wasm でその場で焼く）
        [--gpu | --no-gpu]           WebGPU（Node は npm の webgpu＝Dawn が要る）。既定＝あれば使う
        [--workers N]                組立/クリップ/MVT/gzip の worker 数（既定＝コア数・0＝単一スレッド）
+       [--drop-rate R]              点の低ズーム間引き率（tippecanoe -r 相当・既定 2.5・1＝全点保持）
   parquet <in.geopbf> <out.parquet>  GeoPBF を GeoParquet（WKB・bbox 列・gzip）へ
        [--compression gzip|none] [--row-group N] [--gpu | --no-gpu]
 
@@ -262,7 +263,7 @@ const engineNote = (st) => st.engine === "gpu" ? `GPU ${[st.gpu?.vendor, st.gpu?
 
 async function pmtiles(argv) {
 	const { toPMTiles } = await import("../src/convert/tiler.js");
-	const { pos: [inPath, outPath], opts } = parseArgs(argv, ["minzoom", "maxzoom", "extent", "buffer", "layer", "gint", "lod-bias", "workers"]);
+	const { pos: [inPath, outPath], opts } = parseArgs(argv, ["minzoom", "maxzoom", "extent", "buffer", "layer", "gint", "lod-bias", "workers", "drop-rate"]);
 	if (!inPath || !outPath) throw new Error("pmtiles <in.geopbf> <out.pmtiles>");
 	const t0 = Date.now();
 	const pbf = await openPbf(inPath);
@@ -275,7 +276,7 @@ async function pmtiles(argv) {
 	const r = await toPMTiles(pbf, { gint, gpu: wantGpu,
 		minZoom: opts.minzoom !== undefined ? +opts.minzoom : 0, maxZoom: opts.maxzoom !== undefined ? +opts.maxzoom : 14,
 		extent: opts.extent ? +opts.extent : undefined, buffer: opts.buffer !== undefined ? +opts.buffer : undefined,
-		layer: opts.layer, lodBias: opts["lod-bias"] !== undefined ? +opts["lod-bias"] : undefined, workers: opts.workers !== undefined ? +opts.workers : undefined });
+		layer: opts.layer, lodBias: opts["lod-bias"] !== undefined ? +opts["lod-bias"] : undefined, workers: opts.workers !== undefined ? +opts.workers : undefined, dropRate: opts["drop-rate"] !== undefined ? +opts["drop-rate"] : undefined });
 	await writeFile(outPath, r.buffer);
 	const s = r.stats;
 	console.log(`${inPath}  features ${num(pbf.length)}  gint ${opts.gint ? "読込" : "焼き"} ${t1 - t0} ms（arc ${num(s.arcs)}・頂点 ${num(s.vertices)}）`);

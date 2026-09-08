@@ -122,8 +122,12 @@ Where the GPU is not: Node has no `navigator.gpu`. `npm i webgpu` (Dawn) gives t
 `--gpu` reports the fallback and runs the CPU path — same bytes out. Deno's built-in WebGPU works as is. In the
 browser everything is automatic.
 
-Options — `toPMTiles(pbf, { gint, minZoom=0, maxZoom=14, extent=4096, buffer=80, layer, lodBias=0, tileCompression:"gzip", gpu, workers, onProgress })`,
-`toGeoParquet(pbf, { codec:"gzip"|"none", rowGroupSize=65536, bboxColumn=true, geometryName="geometry", gpu })`.
+Options — `toPMTiles(pbf, { gint, minZoom=0, maxZoom=14, extent=4096, buffer=80, layer, lodBias=0, dropRate=2.5, tileCompression:"gzip", gpu, workers, onProgress })`,
+`toGeoParquet(pbf, { codec:"gzip"|"none", rowGroupSize=65536, bboxColumn="auto", geometryName="geometry", gpu })`.
+Points skip the clipping tree entirely (tile index by shift, buffer copies to neighbours) and are thinned at lower zooms
+like tippecanoe's `-r`: `dropRate` 2.5 keeps 1/2.5 of the points per zoom step below `maxZoom`, chosen by a hash of the
+feature id so the kept sets nest; `dropRate: 1` keeps every point in every tile. Point-only datasets get no `bbox`
+covering column in GeoParquet (it would repeat the coordinates) unless `bboxColumn: true`.
 `gpu: false` forces CPU; a `GPU` object (e.g. from the `webgpu` package) can be passed as `gpu`.
 
 **Against tippecanoe** (v2.82, same 4-core box, same Natural Earth input, z0–10): tippecanoe 58 s / 147 MB / 573,885 tiles;
@@ -132,7 +136,9 @@ interior tiles are byte-for-byte the same size apart from the layer name and the
 difference is vertex retention: the Gint rank threshold keeps somewhat more coastline vertices at mid zooms than
 tippecanoe's Douglas-Peucker. `lodBias` moves that knob — `+3` raises the threshold by one rank step (≈2× coarser
 linearly), `+6` lands on tippecanoe's size, negative values keep more. GDAL's PMTiles driver (3.12) took 780 s for the
-same job.
+same job. Points (1,000,000 synthetic, 4 attributes, z0–10): geopbf 24 s / 51 MB with the default `dropRate`
+(tippecanoe defaults 31 s / 42 MB), 55 s / 270 MB keeping every point (tippecanoe `-r1` 65 s / 221 MB); GeoParquet
+6.8 s / 20.4 MB (geopandas 4.9 s write / 20.2 MB).
 
 ## COG — Cloud Optimized GeoTIFF (`geopbf/cog`)
 

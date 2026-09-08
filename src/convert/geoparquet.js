@@ -119,7 +119,7 @@ function inferColumns(pbf) {
 	return cols;
 }
 
-// opts: { gpu, codec: "gzip"|"none", rowGroupSize, compress, geometryName="geometry", bboxColumn=true }
+// opts: { gpu, codec: "gzip"|"none", rowGroupSize, compress, geometryName="geometry", bboxColumn="auto"|true|false }
 export async function toGeoParquet(pbf, opts = {}) {
 	const t0 = now();
 	const stats = { engine: "cpu", features: pbf.length, vertices: 0, ms: {} };
@@ -165,7 +165,9 @@ export async function toGeoParquet(pbf, opts = {}) {
 	}
 	stats.ms.wkb = now() - t2;
 	// ── スキーマ・列
-	const gname = opts.geometryName ?? "geometry", withBbox = opts.bboxColumn !== false;
+	// bbox 覆域列：既定 "auto"＝点だけのデータでは省く（点の bbox は点そのもの＝列 4 本ぶん丸ごと冗長）。true/false で明示可
+	const gname = opts.geometryName ?? "geometry";
+	const withBbox = opts.bboxColumn === undefined || opts.bboxColumn === "auto" ? !(types.size && [...types].every(t => t === "Point" || t === "MultiPoint")) : !!opts.bboxColumn;
 	const props = inferColumns(pbf);
 	const schema = [{ name: "schema", numChildren: props.length + 1 + (withBbox ? 1 : 0) }];
 	const columns = [];

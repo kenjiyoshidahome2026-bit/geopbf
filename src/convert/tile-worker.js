@@ -5,7 +5,7 @@ import { gzipMany } from "./gzip.js";
 
 let S = null;
 async function handle(m) {
-	if (m.type === "init") { S = m.S; return { msg: { type: "ready" }, transfers: [] }; }
+	if (m.type === "init") { S = m.S; if (S.tagsJson) { S.tags = JSON.parse(S.tagsJson); S.tagsJson = null; } return { msg: { type: "ready" }, transfers: [] }; }
 	const r = assembleZoom(S, m.J);
 	const raws = r.contents.map(c => c[1]);
 	const bytes = m.gzip ? await gzipMany(raws) : raws;
