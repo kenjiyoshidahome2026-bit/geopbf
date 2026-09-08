@@ -40,6 +40,10 @@ const USAGE = `geopbf <command>
   parquet <in.geopbf> <out.parquet>  GeoPBF を GeoParquet（WKB・bbox 列・gzip）へ
        [--compression zstd|gzip|none] [--row-group N] [--gpu | --no-gpu]   （既定 zstd＝Node 22.15+・gzip の半分以下）
        [--include a,b] [--exclude a,b] [--exclude-all]  列の選別
+  parquet2pbf <in.parquet> <out.geopbf>  GeoParquet（WKB・経緯度）を GeoPBF へ＝逆変換。geopandas / DuckDB / pyarrow の出力も可
+       [--precision N]              座標の小数桁（既定＝geopbf:precision か 6）
+       [--name name] [--geometry col] [--ignore-crs] [--no-gzip]
+       [--include a,b] [--exclude a,b] [--exclude-all]  列の選別
        [--order str|hilbert|morton|none]  行の空間整列（既定 str＝行グループ bbox が重ならない・none＝入力順）
        [--no-bbox]                  bbox 覆域列を書かない（点データで半分の大きさ・刈り込みは失う）
 
@@ -310,10 +314,25 @@ async function parquet(argv) {
 	console.log(`  復号 ${s.ms.decode.toFixed(0)} ms・double/bbox ${s.ms.kernels.toFixed(0)} ms・WKB ${s.ms.wkb.toFixed(0)} ms・Parquet ${s.ms.parquet.toFixed(0)} ms・合計 ${s.ms.total.toFixed(0)} ms`);
 }
 
+async function parquet2pbf(argv) {
+	const { fromGeoParquet } = await import("../src/convert/geoparquet.js");
+	const { pos: [inPath, outPath], opts } = parseArgs(argv, ["precision", "name", "geometry", "include", "exclude"]);
+	if (!inPath || !outPath) throw new Error("parquet2pbf <in.parquet> <out.geopbf>");
+	const r = await fromGeoParquet(new Uint8Array(await readFile(inPath)), { precision: opts.precision !== undefined ? +opts.precision : undefined, name: opts.name, geometryColumn: opts.geometry, ignoreCrs: !!opts["ignore-crs"], ...attrOpts(opts) });
+	const gzip = !opts["no-gzip"];
+	let out = Buffer.from(r.pbf.arrayBuffer);
+	if (gzip) out = gzipSync(out, { level: 9 });
+	await writeFile(outPath, out);
+	const s = r.stats;
+	console.log(`${inPath}  features ${num(s.features)}  頂点 ${num(s.vertices)}  列 ${s.columns.length}  CRS ${s.crs}  writer ${s.created || "?"}`);
+	if (s.skipped.length) console.log(`  読まなかった列: ${s.skipped.map(k => `${k.name}(${k.reason})`).join(" ")}`);
+	console.log(`${outPath}  ${mb(out.length)}${gzip ? " (gzip)" : ""}  precision ${s.precision}  読込 ${s.ms.read.toFixed(0)} ms・GeoPBF ${s.ms.encode.toFixed(0)} ms`);
+}
+
 // ── entry ─────────────────────────────────────────────────────────────────────
 
 const [cmd, ...argv] = process.argv.slice(2);
-const commands = { enc, dec, info, lod, cog, pmtiles, parquet };
+const commands = { enc, dec, info, lod, cog, pmtiles, parquet, parquet2pbf };
 if (!cmd || cmd === "--help" || cmd === "-h") { console.log(USAGE); process.exit(0); }
 if (!commands[cmd]) { console.error(`geopbf: 知らないコマンド "${cmd}"\n`); console.error(USAGE); process.exit(1); }
 try {

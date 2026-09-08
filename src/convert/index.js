@@ -2,7 +2,8 @@
 // compute で、無ければ同じ契約の CPU 経路で（bit 一致＝tests/t-convert-gpu.html で検定）。
 export { toPMTiles, lodThreshold, propsToTags } from "./tiler.js";
 export { attrFilter } from "./attrs.js";
-export { toGeoParquet } from "./geoparquet.js";
+export { toGeoParquet, fromGeoParquet } from "./geoparquet.js";
+export { readParquet } from "./parquet-read.js";
 export { getDevice, findGPU, setGPU } from "./gpu.js";
 export { createEngine, cpuEngine } from "./engine.js";
 export { writePMTiles, assemblePMTiles, readPMTiles, zxyToTileId, tileIdToZxy } from "./pmtiles.js";

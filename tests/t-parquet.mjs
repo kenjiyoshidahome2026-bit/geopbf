@@ -9,7 +9,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GeoPBF } from "../src/pbf-base.js";
-import { toGeoParquet } from "../src/convert/geoparquet.js";
+import { toGeoParquet, fromGeoParquet } from "../src/convert/geoparquet.js";
 
 let fails = 0;
 const ok = (cond, msg) => { if (!cond) { console.error("✗", msg); fails++; } else console.log("✓", msg); };
@@ -217,6 +217,45 @@ print(json.dumps(out))
 	else { const o = JSON.parse(chk.stdout); if (rz) ok(o["z.parquet"] === true, `pyarrow: zstd ファイルの内容が一致（${JSON.stringify(o)}）`); ok(o["pages.parquet"] === true, "pyarrow: 複数データページのファイルの内容が一致"); }
 }
 
+// ---- 逆変換 GeoParquet → GeoPBF（往復で GeoJSON が一致・全コーデック・複数ページ・geopandas/DuckDB の出力） -------------
+{
+	const norm = (p) => JSON.stringify(p.geojson.features.map(f => [f.geometry, f.properties]));
+	const want = norm(pbf);
+	for (const codec of ["none", "gzip", ...(await (await import("../src/convert/gzip.js")).hasZstd() ? ["zstd"] : [])]) {
+		const w = await toGeoParquet(pbf, { gpu: false, codec, order: "none" });
+		const r = await fromGeoParquet(w.buffer);
+		ok(norm(r.pbf) === want && r.pbf.precision() === 6 && r.pbf.name() === "fix" && r.pbf.attribution() === "t-parquet", `往復 ${codec}: 幾何（GC・穴・多部・null）・属性（Date・JSON・入れ子 a.b・真偽・負数）・ヘッダが一致`);
+	}
+	const w2 = await toGeoParquet(pbf, { gpu: false, codec: "none", order: "str", pageSize: 64, rowGroupSize: 3 });
+	const r2 = await fromGeoParquet(w2.buffer);
+	ok(r2.stats.features === 8 && JSON.stringify(r2.pbf.geojson.features.map(f => f.properties.n).sort()) === JSON.stringify(pbf.geojson.features.map(f => f.properties.n).sort()) && r2.stats.skipped.length === 0, `往復（複数ページ・3 行グループ・STR 順）: 8 feature・bbox 覆域列は黙って省く`);
+	const r3 = await fromGeoParquet(w2.buffer, { include: ["n"], precision: 3 });
+	ok(Object.keys(r3.pbf.getProperties(0)).join() === "n" && r3.pbf.precision() === 3, "逆変換の include と precision");
+	let threw = false; try { await fromGeoParquet(w2.buffer, { geometryColumn: "nope" }); } catch { threw = true; } ok(threw, "幾何列が無ければ例外");
+	// geopandas（pyarrow: snappy・辞書）と DuckDB（PLAIN_DICTIONARY）の出力
+	const gj = join(dir, "fix.geojson"); writeFileSync(gj, JSON.stringify(pbf.geojson));
+	const py2 = spawnSync("python3", ["-c", `
+import sys, json
+try:
+    import geopandas as gpd
+except Exception: print("NOGPD"); sys.exit(0)
+g = gpd.read_file(sys.argv[1]); g.to_parquet(sys.argv[2]); g.to_parquet(sys.argv[3], compression="zstd", data_page_version="2.0")
+try:
+    import duckdb; duckdb.sql("COPY (SELECT * FROM '%s') TO '%s' (FORMAT PARQUET)" % (sys.argv[2], sys.argv[4])); print("OK duck")
+except Exception as e: print("OK noduck")
+`, gj, join(dir, "gpd.parquet"), join(dir, "gpd2.parquet"), join(dir, "duck.parquet")], { encoding: "utf8" });
+	if (py2.status !== 0 || !py2.stdout || py2.stdout.startsWith("NOGPD")) skip("geopandas/DuckDB 出力の逆変換（geopandas 無し）");
+	else {
+		const names = (p) => p.geojson.features.map(f => f.properties.n).sort().join();
+		for (const f of ["gpd.parquet", "gpd2.parquet", ...(py2.stdout.includes("OK duck") ? ["duck.parquet"] : [])]) {
+			const r = await fromGeoParquet(new Uint8Array(readFileSync(join(dir, f))));
+			const b = r.pbf.geojson.features.find(f => f.properties.n === "B"), a = r.pbf.geojson.features.find(f => f.properties.n === "A");
+			// GDAL は幾何なし feature を落とし、真偽を 0/1 に、入れ子を struct 列にする＝そこは書き手の流儀（struct の葉は "nest.x" に平坦化して拾う）
+			ok(r.stats.features >= 7 && b && b.geometry.type === "MultiPolygon" && b.geometry.coordinates[0].length === 2 && a.properties.v === 1 && a.properties.f === 1.5 && (a.properties.b === true || a.properties.b === 1) && a.properties.nest?.x === "é" && a.properties.j?.a === 1 && r.stats.skipped.length === 0 && r.stats.crs.includes("4326"), `${f}: ${r.stats.features} feature・穴付き多面・属性型・struct の葉を "nest.x" に・CRS ${r.stats.crs}（writer ${r.stats.created.slice(0, 18)}）`);
+		}
+	}
+}
+
 // ---- 行グループ分割 -------------------------------------------------------------------------
 const r3 = await toGeoParquet(pbf, { gpu: false, rowGroupSize: 3, order: "none" });
 ok(r3.buffer.length > buf.length, "rowGroupSize=3 で 3 行グループ（footer が大きい）");
@@ -229,6 +268,9 @@ const out = run("parquet", inPath, join(dir, "cli.parquet"), "--no-gpu", "--comp
 ok(/features 8/.test(out) && /CPU/.test(out) && /Polygon/.test(out), "CLI parquet: 実行報告");
 const cliBuf = readFileSync(join(dir, "cli.parquet"));
 ok(cliBuf.subarray(0, 4).toString() === "PAR1" && cliBuf.length === r0.buffer.length, "CLI parquet: 出力（無圧縮）がライブラリ経路と同じ長さ");
+const out2 = run("parquet2pbf", join(dir, "cli.parquet"), join(dir, "back.geopbf"), "--no-gzip");
+const back = await new GeoPBF().set(new Uint8Array(readFileSync(join(dir, "back.geopbf"))));
+ok(/features 8/.test(out2) && back.length === 8 && back.precision() === 6 && JSON.stringify(back.geojson.features.map(f => [f.geometry, f.properties])) === JSON.stringify(pbf.geojson.features.map(f => [f.geometry, f.properties])), "CLI parquet2pbf: GeoParquet → GeoPBF が元と一致");
 
 console.log(fails ? `\n${fails} 件失敗` : "\n全件通過");
 process.exit(fails ? 1 : 0);

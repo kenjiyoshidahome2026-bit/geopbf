@@ -161,6 +161,15 @@ no pruning).
 Attributes travel to the workers as one typed-array table (key dictionary, UTF-8 string dictionary, per-feature entry
 list) instead of a million small arrays: worker start-up for 1,000,000 features dropped from 16 s to 1.6 s and the
 string bytes are written into the tiles as they are, without a second UTF-8 encoding.
+**And back again.** `fromGeoParquet(u8)` / `geopbf parquet2pbf` turns a GeoParquet file into a GeoPBF: a dependency-free
+Parquet reader (Thrift compact footer, DataPage v1/v2, PLAIN and dictionary encodings, none/gzip/zstd and a built-in
+snappy decoder for pyarrow's default) plus a WKB parser (all seven types, EWKB flags, Z/M dropped). A file geopbf wrote
+comes back bit-identical — coordinates are `round(x·10^precision)` with the precision recorded in the file — and files
+written by geopandas, pyarrow (v2 pages, zstd) and DuckDB read back to the same features (Natural Earth: all 258
+identical across the three writers). The ZCTA file above (33,092 features, 52M vertices, zstd) comes back in 72 s —
+12 s to read, 60 s to encode the GeoPBF — with every feature identical to the original. The CRS must be lon/lat
+(CRS84 / EPSG:4326); anything else is refused unless `ignoreCrs`. PMTiles has no such inverse: tiles are simplified and
+quantized, so the best one could do is an approximate reassembly, which this package does not attempt.
 Points skip the clipping tree entirely (tile index by shift, buffer copies to neighbours) and are thinned at lower zooms
 like tippecanoe's `-r`: `dropRate` 2.5 keeps 1/2.5 of the points per zoom step below `maxZoom`, chosen by a hash of the
 feature id so the kept sets nest; `dropRate: 1` keeps every point in every tile. Point-only datasets get no `bbox`
