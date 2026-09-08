@@ -35,6 +35,7 @@ const fc = { type: "FeatureCollection", features: [
 	{ type: "Feature", properties: { n: "MPt" }, geometry: { type: "MultiPoint", coordinates: [[1, 1], [2, 2]] } },
 	{ type: "Feature", properties: { n: "T" }, geometry: { type: "Polygon", coordinates: [sq(15, 15, 15.01, 15.01)] } },   // 極小（z0 で 0.01 単位²）
 	{ type: "Feature", properties: { n: "Dust" }, geometry: { type: "MultiPolygon", coordinates: Array.from({ length: 100 }, (_, i) => [sq(35 + (i % 10) * 0.1, 35 + Math.floor(i / 10) * 0.1, 35.05 + (i % 10) * 0.1, 35.05 + Math.floor(i / 10) * 0.1)]) } },   // 小島 100（z0 で各 0.3 単位²）
+	{ type: "Feature", properties: { n: "L", d: new Date(0) }, geometry: { type: "LineString", coordinates: [[12, 9], [12.5, 8.5], [13, 9]] } },   // 属性が L と同一＝gint は同じ id に束ねる
 ] };
 const pbf = await new GeoPBF({ name: "fix", precision: 6, attribution: "t-pmtiles" }).set(structuredClone(fc));
 const gint = await bakeGint(pbf);
@@ -52,7 +53,8 @@ ok(h.addressed === r.stats.tiles && h.entries <= h.addressed && h.contents <= h.
 
 // z0: 全 feature が 1 タイルに
 const t0 = decodeTile(await pm.getTile(0, 0, 0))[0];
-ok(t0 && t0.name === "fix" && t0.features.length === 8, `z0: 8 feature（${t0?.features.length}＝極小 T は落ち・Dust は残る）`);
+ok(t0 && t0.name === "fix" && t0.features.length === 8, `z0: 8 feature（${t0?.features.length}＝極小 T は落ち・Dust は残る・同属性の 2 本目の線は L に束ねられる）`);
+ok(t0.features.find(f => f.id === 4)?.geometry.length === 2 && !t0.features.some(f => f.id === 9), "z0: 属性行が同一の線は同じ id の 2 部分（gint の規則）＝幾何は失われない");
 const byId = new Map(t0.features.map(f => [f.id, f]));
 ok(byId.get(0).type === 3 && byId.get(4).type === 2 && byId.get(5).type === 1 && byId.get(6).type === 1, "z0: 型（面/線/点/多点）");
 ok(byId.get(0).props.n === "A" && byId.get(0).props.v === 1 && byId.get(1).props.b === true && byId.get(4).props.d === "1970-01-01T00:00:00.000Z", "z0: 属性（Date は ISO 文字列）");

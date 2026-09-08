@@ -173,7 +173,10 @@ interior tiles are byte-for-byte the same size apart from the layer name and the
 difference is vertex retention: the Gint rank threshold keeps somewhat more coastline vertices at mid zooms than
 tippecanoe's Douglas-Peucker. `lodBias` moves that knob — `+3` raises the threshold by one rank step (≈2× coarser
 linearly), `+6` lands on tippecanoe's size, negative values keep more. GDAL's PMTiles driver (3.12) took 780 s for the
-same job. Points (1,000,000 synthetic, 4 attributes, z0–10): geopbf 14.6 s / 51 MB with the default `dropRate`
+same job. Lines (Natural Earth 10m roads, 56,600 features / 709k vertices, z0–10): geopbf 10.0 s / 73.8 MB / 108,686 tiles from
+GeoPBF (+2.2 s encode + Gint), tippecanoe 16.2 s / 69.7 MB / 108,682 tiles; every line that reaches a tile edge continues in
+the neighbouring tile (3,001 of 3,001 checked at z8), and the only features tippecanoe keeps that geopbf does not are
+15 small closed loops that the rank filter collapses at z0 (extent ≤ 3 tile units). Points (1,000,000 synthetic, 4 attributes, z0–10): geopbf 14.6 s / 51 MB with the default `dropRate`
 (tippecanoe defaults 31 s / 42 MB), 42 s / 270 MB keeping every point (tippecanoe `-r1` 65 s / 221 MB); GeoParquet
 with STR ordering and the bbox column ≈12 s / 45.6 MB (the Parquet stage itself 7 s, down from 11 s before columns were
 transposed once into contiguous arrays and dictionary-encoded), without the bbox column 21.4 MB (geopandas 4.9 s write /
