@@ -33,6 +33,8 @@ const fc = { type: "FeatureCollection", features: [
 	{ type: "Feature", properties: { n: "L", d: new Date(0) }, geometry: { type: "LineString", coordinates: [[10, 9], [10.5, 8.5], [11, 9]] } },
 	{ type: "Feature", properties: { n: "P" }, geometry: { type: "Point", coordinates: [10.5, 10.5] } },
 	{ type: "Feature", properties: { n: "MPt" }, geometry: { type: "MultiPoint", coordinates: [[1, 1], [2, 2]] } },
+	{ type: "Feature", properties: { n: "T" }, geometry: { type: "Polygon", coordinates: [sq(15, 15, 15.01, 15.01)] } },   // 極小（z0 で 0.01 単位²）
+	{ type: "Feature", properties: { n: "Dust" }, geometry: { type: "MultiPolygon", coordinates: Array.from({ length: 100 }, (_, i) => [sq(35 + (i % 10) * 0.1, 35 + Math.floor(i / 10) * 0.1, 35.05 + (i % 10) * 0.1, 35.05 + Math.floor(i / 10) * 0.1)]) } },   // 小島 100（z0 で各 0.3 単位²）
 ] };
 const pbf = await new GeoPBF({ name: "fix", precision: 6, attribution: "t-pmtiles" }).set(structuredClone(fc));
 const gint = await bakeGint(pbf);
@@ -50,13 +52,36 @@ ok(h.addressed === r.stats.tiles && h.entries <= h.addressed && h.contents <= h.
 
 // z0: 全 feature が 1 タイルに
 const t0 = decodeTile(await pm.getTile(0, 0, 0))[0];
-ok(t0 && t0.name === "fix" && t0.features.length === 7, `z0: 7 feature（${t0?.features.length}）`);
+ok(t0 && t0.name === "fix" && t0.features.length === 8, `z0: 8 feature（${t0?.features.length}＝極小 T は落ち・Dust は残る）`);
 const byId = new Map(t0.features.map(f => [f.id, f]));
 ok(byId.get(0).type === 3 && byId.get(4).type === 2 && byId.get(5).type === 1 && byId.get(6).type === 1, "z0: 型（面/線/点/多点）");
 ok(byId.get(0).props.n === "A" && byId.get(0).props.v === 1 && byId.get(1).props.b === true && byId.get(4).props.d === "1970-01-01T00:00:00.000Z", "z0: 属性（Date は ISO 文字列）");
 ok(byId.get(2).geometry.length === 2 && signedArea2(byId.get(2).geometry[0]) > 0 && signedArea2(byId.get(2).geometry[1]) < 0, "z0: 穴付き面＝外環正・穴負");
 ok(byId.get(3).geometry.length === 2 && byId.get(3).geometry.every(g => signedArea2(g) > 0), "z0: MultiPolygon は外環 2 つ");
 ok(byId.get(6).geometry.length === 2, "z0: MultiPoint 2 点");
+// 極小ポリゴン：T は z0 で落ち z9 で現れる。Dust（0.3 単位² ×100）は z0 で積算＝閾値 2 毎に代わりの正方形（100 環 → 十数環）、z9 で 100 環
+{
+	const dust0 = byId.get(8);
+	ok(!byId.has(7) && dust0 && dust0.geometry.length > 5 && dust0.geometry.length < 30 && dust0.geometry.every(g => g.length === 8), `tinyPolygon: z0 で T 無し・Dust は代わりの正方形 ${dust0?.geometry.length} 個`);
+	const at9 = async (lon, lat) => { const n = 1 << 9, tx = Math.floor((lon + 180) / 360 * n), ty = Math.floor((0.5 - Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) / (2 * Math.PI)) * n); const t = await pm.getTile(9, tx, ty); return t ? decodeTile(t)[0].features : []; };
+	const t9 = (await at9(15.005, 15.005)).find(f => f.id === 7);
+	ok(t9 && t9.type === 3 && signedArea2(t9.geometry[0]) > 0, "tinyPolygon: T は z9 に現れる");
+	let rings9 = 0; for (const lon of [35.25, 35.75]) for (const lat of [35.25, 35.75]) { const f = (await at9(lon, lat)).find(f => f.id === 8); if (f) rings9 += f.geometry.length; }
+	ok(rings9 >= 100, `tinyPolygon: Dust は z9 で全 100 環（${rings9}・タイル境界の複製込み）`);
+	const r0 = await toPMTiles(pbf, { gint, gpu: false, minZoom: 0, maxZoom: 0, tinyPolygon: 0, dropRate: 1 });
+	const l0 = decodeTile(await (await readPMTiles(r0.buffer)).getTile(0, 0, 0))[0];
+	ok(l0.features.length === 7 && !l0.features.some(f => f.id === 8), `tinyPolygon 0: 代わりの正方形は無く、z0 で LOD に潰れた T/Dust はただ消える（${l0.features.length} feature）`);
+	const rl = await toPMTiles(pbf, { gint, gpu: false, minZoom: 0, maxZoom: 0, tinyLine: 20, dropRate: 1 });
+	ok(!decodeTile(await (await readPMTiles(rl.buffer)).getTile(0, 0, 0))[0].features.some(f => f.id === 4), "tinyLine 20: z0 で線 L（外接 11 単位）が落ちる");
+}
+// 属性の選別
+{
+	const one = async (o) => { const r = await toPMTiles(pbf, { gint, gpu: false, minZoom: 0, maxZoom: 0, dropRate: 1, ...o }); const pmx = await readPMTiles(r.buffer); return { f: decodeTile(await pmx.getTile(0, 0, 0))[0].features.find(f => f.id === 1).props, fields: pmx.metadata.vector_layers[0].fields }; };
+	const ex = await one({ exclude: ["v"] }), inc = await one({ include: ["n"] }), all = await one({ excludeAll: true });
+	ok(ex.f.n === "B" && ex.f.b === true && !("v" in ex.f) && !("v" in ex.fields), "exclude: v が消え他は残る（fields も）");
+	ok(Object.keys(inc.f).join() === "n" && Object.keys(inc.fields).join() === "n", "include: n だけ");
+	ok(Object.keys(all.f).length === 0 && Object.keys(all.fields).length === 0, "excludeAll: 属性なし");
+}
 
 // 共有境界：A と B の境界頂点が一致（z0〜z9 の各ズームで、A の x≈境界の頂点は B にもある）
 const key = (p) => p[0] + "," + p[1];
@@ -128,10 +153,13 @@ const inPath = join(dir, "fix.geopbf"); writeFileSync(inPath, gzipSync(Buffer.fr
 const out = run("pmtiles", inPath, join(dir, "fix.pmtiles"), "--maxzoom", "5", "--no-gpu", "--drop-rate", "1");
 ok(/タイル [\d,]+/.test(out) && /CPU/.test(out), "CLI pmtiles: 実行報告（タイル数・エンジン）");
 const cliPm = await readPMTiles(new Uint8Array(readFileSync(join(dir, "fix.pmtiles"))));
-ok(cliPm.header.maxZoom === 5 && decodeTile(await cliPm.getTile(0, 0, 0))[0].features.length === 7, "CLI pmtiles: 出力が読める（gzip GeoPBF 入力・gint はその場で焼く）");
+ok(cliPm.header.maxZoom === 5 && decodeTile(await cliPm.getTile(0, 0, 0))[0].features.length === 8, "CLI pmtiles: 出力が読める（gzip GeoPBF 入力・gint はその場で焼く）");
 writeFileSync(join(dir, "fix.gint"), Buffer.from(gint));
 const out2 = run("pmtiles", inPath, join(dir, "fix2.pmtiles"), "--maxzoom", "3", "--gint", join(dir, "fix.gint"), "--layer", "cli");
 ok(/gint 読込/.test(out2) && decodeTile(await (await readPMTiles(new Uint8Array(readFileSync(join(dir, "fix2.pmtiles"))))).getTile(0, 0, 0))[0].name === "cli", "CLI pmtiles: --gint と --layer");
+run("pmtiles", inPath, join(dir, "fix3.pmtiles"), "--maxzoom", "0", "--no-gpu", "--tiny-polygon", "0", "--exclude", "v,b", "--drop-rate", "1");
+const l3 = decodeTile(await (await readPMTiles(new Uint8Array(readFileSync(join(dir, "fix3.pmtiles"))))).getTile(0, 0, 0))[0];
+ok(l3.features.length === 7 && !("v" in l3.features.find(f => f.id === 1).props) && "n" in l3.features.find(f => f.id === 1).props, "CLI pmtiles: --tiny-polygon 0 と --exclude");
 
 console.log(fails ? `\n${fails} 件失敗` : "\n全件通過");
 process.exit(fails ? 1 : 0);

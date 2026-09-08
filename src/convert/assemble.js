@@ -1,7 +1,8 @@
 // convert/assemble.js ── 1 ズーム × タイル列範囲の「組立→クリップ→MVT→内容キー」。worker（tile-worker.js）と
 // インライン経路（workers:0）の共通本体＝純関数。bare import 無し（worker がバンドラ無しで読める）。
 //
-// S（静的・worker 初期化時に 1 回）: { arcCount, nPts, point, polyStream, lineStream, extent, buffer, layerName, tags }
+// S（静的・worker 初期化時に 1 回）: { arcCount, nPts, point, polyStream, lineStream, extent, buffer, layerName, tags,
+//    maxZoom, dropRate, tinyPolygon, tinyLine, compArea（面成分の元解像度の面積×2・世界座標尺）, extentShift }
 // J（job）: { z, txFrom, txTo, counts, bbox, offs, out }   … このズームの arc 別 件数/外接/先頭位置（out 内）/圧縮座標
 // 戻り: { tiles: [{ id, key }], contents: [[key, Uint8Array(未圧縮 MVT)]] }
 //
@@ -15,6 +16,8 @@ import { zxyToTileId, contentKey, sameBytes } from "./pmtiles.js";
 export function assembleZoom(S, J) {
 	const { arcCount, nPts, point, polyStream: ps, lineStream: ls, extent, buffer, layerName, tags } = S;
 	const { z, counts, bbox, offs, out } = J;
+	const tinyA2 = 2 * (S.tinyPolygon ?? 0), tinyL = S.tinyLine ?? 0;   // 面積 ×2 で比べる（signedArea2 と同じ尺度）
+	const compArea = tinyA2 ? S.compArea : null, areaScale = Math.pow(4, z + (S.extentShift ?? 12) - 32);   // 世界座標尺 → このズームのタイル座標尺
 	const txRange = [J.txFrom, J.txTo];
 	const attrCache = S._attr ??= new Array(tags.length);   // fid → encodeAttrs（worker 内で永続）
 	const attrOf = (fid) => attrCache[fid] ??= encodeAttrs(tags[fid]);
@@ -47,28 +50,50 @@ export function assembleZoom(S, J) {
 		return { line: line.subarray(0, m), bbox: [bx0, by0, bx1, by1] };
 	};
 	const reversed = (a) => { const r = new Float64Array(a.length); for (let i = 0, j = a.length - 2; j >= 0; i += 2, j -= 2) { r[i] = a[j]; r[i + 1] = a[j + 1]; } return r; };
+	// 極小ポリゴン（tippecanoe の --tiny-polygon-size と同じ考え方）：このズームで元解像度の面積が閾値未満の成分は落とし、落とした
+	// 面積を fid 毎に積む。積算が閾値に達したら、そこに閾値面積の正方形を 1 つ置く＝点在する小島の群れが「何も無い」にならず密度として残る。
+	// 判定は簡略化前の面積（compArea）＝LOD で環が潰れた成分も積算に入る。
+	const tinyAcc = new Map();
+	const tinySquare = (fid, rb, a2full) => {
+		const acc = (tinyAcc.get(fid) ?? 0) + Math.abs(a2full) / 2;
+		if (acc < tinyA2 / 2) { tinyAcc.set(fid, acc); return null; }
+		tinyAcc.set(fid, acc - tinyA2 / 2);
+		const h = Math.sqrt(tinyA2 / 2) / 2, cx = (rb[0] + rb[2]) / 2, cy = (rb[1] + rb[3]) / 2;
+		return { line: new Float64Array([cx - h, cy - h, cx - h, cy + h, cx + h, cy + h, cx + h, cy - h]), bbox: [cx - h, cy - h, cx + h, cy + h] };   // 外環＝y 下向きで面積正
+	};
+	// クリップ後の切片：外環が閾値未満なら捨てる（隣のタイルへ続く縁の欠片・バッファ帯だけに掛かる欠片）
+	const sinkPoly = (fid, rings0) => (tx, ty, parts) => {
+		if (tinyA2 && parts[0] !== rings0 && Math.abs(signedArea2(parts[0])) < tinyA2) return;
+		const t = tileOf(tx, ty); let l = t.polys.get(fid); if (!l) t.polys.set(fid, l = []); l.push(parts);
+	};
 	// ポリゴン（外環→穴。向きは MVT 規則へ。全体 bbox で列範囲外なら組立すら省く）
+	let comp = -1;
 	if (ps) for (let p = 0; p < ps.length;) {
 		const fid = ps[p++], nr = ps[p++], rings = [];
+		comp++;
 		let bb = null;
 		for (let r = 0; r < nr; r++) {
 			const ac = ps[p++], idx = ps.subarray(p, p + ac); p += ac;
+			const skipRest = () => { for (let q = r + 1; q < nr; q++) p += ps[p] + 1; };   // 外環が消えたら残りの環（穴）を読み飛ばす
 			if (r === 0) {   // 外環の arc bbox だけ先に見て列範囲外なら残りを読み飛ばす
 				let x0 = Infinity, x1 = -Infinity;
 				for (const ai of idx) { const aid = ai < 0 ? ~ai : ai; if (!counts[aid]) continue; if (bbox[aid * 4] < x0) x0 = bbox[aid * 4]; if (bbox[aid * 4 + 2] > x1) x1 = bbox[aid * 4 + 2]; }
-				if (x1 < 0 || (x1 + buffer) / extent < txRange[0] || (x0 - buffer) / extent >= txRange[1] + 1) { for (let q = 1; q < nr; q++) p += ps[p] + 1; break; }
+				if (x1 < 0 || (x1 + buffer) / extent < txRange[0] || (x0 - buffer) / extent >= txRange[1] + 1) { skipRest(); break; }
 			}
-			const { line, bbox: rb } = concat(idx, true);
-			if (line.length < 6) { if (r === 0) break; continue; }
-			const a2 = signedArea2(line);
-			if (a2 === 0) { if (r === 0) break; continue; }
+			let { line, bbox: rb } = concat(idx, true);
+			let a2 = line.length < 6 ? 0 : signedArea2(line);
+			const a2full = r === 0 && compArea ? compArea[comp] * areaScale : a2;
+			if (r === 0 && compArea && Math.abs(a2full) < tinyA2) {   // 極小（元解像度で）：積算して代わりの正方形か無し
+				const sq = tinySquare(fid, rb, a2full);
+				if (!sq) { skipRest(); break; }
+				line = sq.line; rb = sq.bbox; a2 = signedArea2(line);
+			} else if (a2 === 0) { if (r === 0) { skipRest(); break; } continue; }   // 潰れた環（穴なら穴だけ消える）
+			else if (r > 0 && tinyA2 && Math.abs(a2) < tinyA2) continue;   // 極小の穴は捨てる
 			rings.push((r === 0) !== (a2 > 0) ? reversed(line) : line);
 			if (r === 0) bb = rb; else { if (rb[0] < bb[0]) bb[0] = rb[0]; if (rb[1] < bb[1]) bb[1] = rb[1]; if (rb[2] > bb[2]) bb[2] = rb[2]; if (rb[3] > bb[3]) bb[3] = rb[3]; }
 		}
 		if (!rings.length) continue;
-		splitToTiles(rings, 2, bb, z, extent, buffer,
-			(tx, ty, parts) => { const t = tileOf(tx, ty); let l = t.polys.get(fid); if (!l) t.polys.set(fid, l = []); l.push(parts); },
-			txRange, (tx0, tx1, ty0, ty1) => fullRanges.push(fid, tx0, tx1, ty0, ty1));
+		splitToTiles(rings, 2, bb, z, extent, buffer, sinkPoly(fid, rings[0]), txRange, (tx0, tx1, ty0, ty1) => fullRanges.push(fid, tx0, tx1, ty0, ty1));
 	}
 	// 線
 	if (ls) for (let p = 0; p < ls.length;) {
@@ -77,6 +102,7 @@ export function assembleZoom(S, J) {
 			const ac = ls[p++], idx = ls.subarray(p, p + ac); p += ac;
 			const { line, bbox: lb } = concat(idx, false);
 			if (line.length < 4) continue;
+			if (tinyL && lb[2] - lb[0] < tinyL && lb[3] - lb[1] < tinyL) continue;   // このズームで閾値未満の短い線は落とす
 			splitToTiles([line], 1, lb, z, extent, buffer, (tx, ty, parts) => { const t = tileOf(tx, ty); let l = t.lines.get(fid); if (!l) t.lines.set(fid, l = []); for (const q of parts) l.push(q); }, txRange);
 		}
 	}

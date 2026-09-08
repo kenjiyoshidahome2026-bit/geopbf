@@ -113,8 +113,8 @@ Compression is one code path with no pako: Node uses `zlib` natively, browsers u
 through its writer/reader directly (≈4× cheaper per tile than the `Blob`→`Response` idiom). The assembly stage is
 typed-array based, stops bisecting as soon as a sub-range of tiles is provably interior to a polygon (one range event
 instead of one clip per tile), encodes the attribute section once per feature, and hashes tile content before copying
-it. Measured on Natural Earth 10m countries (258 polygons, 480k vertices), z0–10 = 573,906 tiles / 152 MB, 4-core
-Node: 5.3–5.6 s with 4 workers (the default is one per core; 3 → 5.8 s, 5–7 → 5.5–6.8 s), 16–18 s single-threaded, of which zlib is ≈8 s (85k unique tiles, ~90 µs each regardless
+it. Measured on Natural Earth 10m countries (258 polygons, 480k vertices), z0–10 = 573,898 tiles / 151.5 MB, 4-core
+Node: 5.3–5.9 s with 4 workers (the default is one per core; 3 → 5.8 s, 5–7 → 5.5–6.8 s), 16–18 s single-threaded, of which zlib is ≈8 s (85k unique tiles, ~90 µs each regardless
 of level); Chromium z0–8 takes ≈5.7 s with 3 workers. The GPU stage is ≈150 ms of that on a software adapter
 (SwiftShader) — real-GPU numbers were not measurable in the CI container.
 
@@ -122,8 +122,14 @@ Where the GPU is not: Node has no `navigator.gpu`. `npm i webgpu` (Dawn) gives t
 `--gpu` reports the fallback and runs the CPU path — same bytes out. Deno's built-in WebGPU works as is. In the
 browser everything is automatic.
 
-Options — `toPMTiles(pbf, { gint, minZoom=0, maxZoom=14, extent=4096, buffer=80, layer, lodBias=0, dropRate=2.5, tileCompression:"gzip", gpu, workers, onProgress })`,
-`toGeoParquet(pbf, { codec:"gzip"|"none", rowGroupSize=65536, order="str", bboxColumn=true, geometryName="geometry", gpu })`.
+Options — `toPMTiles(pbf, { gint, minZoom=0, maxZoom=14, extent=4096, buffer=80, layer, lodBias=0, dropRate=2.5, tinyPolygon=2, tinyLine=0, include, exclude, excludeAll, tileCompression:"gzip", gpu, workers, onProgress })`,
+`toGeoParquet(pbf, { codec:"gzip"|"none", rowGroupSize=65536, order="str", bboxColumn=true, geometryName="geometry", include, exclude, excludeAll, gpu })`.
+Tile quality follows tippecanoe's defaults where they matter: polygon components smaller than `tinyPolygon` tile
+units² at a zoom (measured on the full-resolution geometry, so components the simplification collapsed count too) are
+replaced by one placeholder square per accumulated threshold of area — atolls and archipelagos stay visible as dots at
+z2 instead of disappearing — and sub-threshold clip fragments and holes are dropped; the clipper removes the zero-width
+spurs Sutherland–Hodgman leaves along tile edges; `include` / `exclude` / `excludeAll` select attributes (tiles and
+Parquet columns alike). `tinyPolygon: 0` turns the reduction off.
 Rows in the Parquet file are **spatially ordered** (`order`, default `"str"`): feature bbox centres are packed
 Sort-Tile-Recursive style — sorted by x, cut into √P slices of `rowGroupSize` multiples, each slice sorted by y — so
 every row group's `bbox` statistics cover a disjoint patch and a reader that pushes an area filter down (DuckDB,
@@ -142,7 +148,7 @@ covering column in GeoParquet (it would repeat the coordinates) unless `bboxColu
 `gpu: false` forces CPU; a `GPU` object (e.g. from the `webgpu` package) can be passed as `gpu`.
 
 **Against tippecanoe** (v2.82, same 4-core box, same Natural Earth input, z0–10): tippecanoe 58 s / 147 MB / 573,885 tiles;
-geopbf ≈6.5 s from GeoJSON (encode 0.4 s + Gint 0.5 s + tiles 5.3–5.6 s) / 152 MB / 573,906 tiles — the same tiles within a handful, and
+geopbf ≈6.5 s from GeoJSON (encode 0.4 s + Gint 0.5 s + tiles 5.3–5.9 s) / 151.5 MB / 573,898 tiles — the same tiles within a handful (16 only in geopbf, 3 only in tippecanoe, all at z6–10), and
 interior tiles are byte-for-byte the same size apart from the layer name and the feature `id` geopbf writes. The 3 % size
 difference is vertex retention: the Gint rank threshold keeps somewhat more coastline vertices at mid zooms than
 tippecanoe's Douglas-Peucker. `lodBias` moves that knob — `+3` raises the threshold by one rank step (≈2× coarser

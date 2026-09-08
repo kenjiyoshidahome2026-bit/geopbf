@@ -14,21 +14,35 @@ const ix = (ax, ay, bx, by, axis, val) => {   // 線分 a-b と axis=val の交�
 };
 
 // 環を半平面（axis の座標が val 以下＝less、以上＝!less）で切る。3 点未満なら null。出力は Float64Array（最大 2n+2 点）。
+// 切断線上に連続する 3 点は中央を落とす：SH は環が線を出入りするたびに線上へ 2 点置くので、外側で往復する環は線上に
+// 「行って戻る」幅ゼロの棘や重なり辺を残す。線上の 3 点は共線＝中央を抜いても面は不変で、棘だけが消える
+//（バッファ縁の全面塗り判定が 4 頂点で決まり、タイルの無駄な頂点も減る）。
 export function clipRingHalf(ring, axis, val, less) {
 	const n = ring.length >> 1;
 	if (n < 3) return null;
 	const out = new Float64Array((n + 1) * 4);
 	let m = 0;
+	const on = (i) => out[i + axis] === val;   // 出力 i 番目（要素添字）の点が切断線上か
+	const emit = (x, y) => {
+		if (m >= 4 && (axis === 0 ? x : y) === val && on(m - 2) && on(m - 4)) m -= 2;
+		out[m++] = x; out[m++] = y;
+	};
 	let px = ring[(n - 1) * 2], py = ring[(n - 1) * 2 + 1];
 	let pin = less ? (axis === 0 ? px : py) <= val : (axis === 0 ? px : py) >= val;
 	for (let i = 0; i < n; i++) {
 		const x = ring[i * 2], y = ring[i * 2 + 1];
 		const cin = less ? (axis === 0 ? x : y) <= val : (axis === 0 ? x : y) >= val;
 		if (cin) {
-			if (!pin) { const p = ix(px, py, x, y, axis, val); out[m++] = p[0]; out[m++] = p[1]; }
-			out[m++] = x; out[m++] = y;
-		} else if (pin) { const p = ix(px, py, x, y, axis, val); out[m++] = p[0]; out[m++] = p[1]; }
+			if (!pin) { const p = ix(px, py, x, y, axis, val); emit(p[0], p[1]); }
+			emit(x, y);
+		} else if (pin) { const p = ix(px, py, x, y, axis, val); emit(p[0], p[1]); }
 		px = x; py = y; pin = cin;
+	}
+	// 継ぎ目（末尾→先頭→2 番目）も同じ規則で
+	for (let changed = true; changed && m >= 8;) {
+		changed = false;
+		if (on(m - 2) && on(0) && on(2)) { out.copyWithin(0, 2, m); m -= 2; changed = true; }
+		if (m >= 8 && on(m - 4) && on(m - 2) && on(0)) { m -= 2; changed = true; }
 	}
 	return m >= 6 ? out.subarray(0, m) : null;
 }

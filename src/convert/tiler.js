@@ -16,6 +16,8 @@ import { assembleZoom } from "./assemble.js";
 import { createPool, defaultWorkers } from "./pool.js";
 import { gzipMany } from "./gzip.js";
 import { assemblePMTiles, sameBytes } from "./pmtiles.js";
+import { attrFilter } from "./attrs.js";
+export { attrFilter };
 
 // lodBias: 正で閾値を上げる＝残る頂点が減る（3 で VW 面積 4 倍＝線形で 2 倍粗い相当）。負で細かく。
 export function lodThreshold(z, extent, lodBias = 0) {
@@ -23,11 +25,11 @@ export function lodThreshold(z, extent, lodBias = 0) {
 	return Math.max(0, Math.min(63, v));
 }
 
-// 属性 → MVT tags（GeoPBF の値型を MVT の値型へ。入れ子は "a.b" に平坦化・Blob/ImageData/関数は落とす）
-export function propsToTags(props, fields) {
+// 属性 → MVT tags（GeoPBF の値型を MVT の値型へ。入れ子は "a.b" に平坦化・Blob/ImageData/関数は落とす）。keep: attrFilter の戻り
+export function propsToTags(props, fields, keep = null) {
 	const tags = [];
 	const put = (k, v) => {
-		if (v === null || v === undefined) return;
+		if (v === null || v === undefined || (keep && !keep(k))) return;
 		let t;
 		if (typeof v === "string") t = v;
 		else if (typeof v === "number") { if (!Number.isFinite(v)) return; t = v; }
@@ -47,9 +49,40 @@ export function propsToTags(props, fields) {
 	return tags;
 }
 
+// 面成分（polyStream の成分順）の外環の元解像度の面積 ×2（世界座標 2^32 尺・成分の先頭頂点を原点に取って f64 で組む＝
+// 2^64 級の積の丸めを避ける）。極小判定は tippecanoe と同じく「簡略化前の面積」で行う＝低ズームで LOD が環を潰しても、
+// その成分の面積は積算されて代わりの正方形になる（小島の群れ・区画の塊が「何も無い」にならない）。
+export function componentAreas(ps, arcMeta, xy) {
+	let nc = 0;
+	for (let p = 0; p < ps.length;) { p += 2; nc++; const nr = ps[p - 1]; for (let r = 0; r < nr; r++) p += ps[p] + 1; }
+	const area = new Float64Array(nc);
+	let c = 0;
+	for (let p = 0; p < ps.length;) {
+		const nr = ps[p + 1]; p += 2;
+		const ac = ps[p], idx = ps.subarray(p + 1, p + 1 + ac);
+		let ox = 0, oy = 0, px = 0, py = 0, s = 0, first = true;
+		for (const ai of idx) {
+			const aid = ai < 0 ? ~ai : ai, o = arcMeta[aid * 8], n = arcMeta[aid * 8 + 1];
+			for (let j = 0; j < n; j++) {
+				const i = ai < 0 ? n - 1 - j : j, x = xy[(o + i) * 2], y = xy[(o + i) * 2 + 1];
+				if (first) { ox = x; oy = y; px = 0; py = 0; first = false; continue; }
+				const lx = x - ox, ly = y - oy;
+				s += px * ly - lx * py; px = lx; py = ly;
+			}
+		}
+		area[c++] = s;   // 閉環（末尾＝先頭）なら閉じ辺の項は 0
+		for (let r = 0; r < nr; r++) p += ps[p] + 1;
+	}
+	return area;
+}
+
 // pbf: GeoPBF（属性・ヘッダ用）。opts.gint: GintBUF（ArrayBuffer）。無ければ pbf._gintBuffer（pbf.gint() 後）。
 // opts.workers: worker 数（0＝インライン・既定＝コア数・最大 8）
 // opts.dropRate: 点の低ズーム間引き率（tippecanoe の -r 相当・既定 2.5＝1 ズーム下がる毎に 1/2.5・1 で全点保持。面/線には効かない）
+// opts.tinyPolygon: そのズームのタイル座標で面積がこれ未満のポリゴン成分を落とす（tippecanoe の -s 相当・既定 2＝4096 格子で 1.4 単位角・
+//   0 で無効）。落とした面積は feature 毎に積み、閾値に達する毎に閾値面積の正方形を 1 つ残す
+// opts.tinyLine: 外接がこれ未満（両辺）の線分列を落とす（既定 0＝落とさない）
+// opts.include / exclude / excludeAll: 属性の選別（tippecanoe の -y / -x / -X）
 export async function toPMTiles(pbf, opts = {}) {
 	const t0 = now();
 	const gintBuf = opts.gint ?? pbf._gintBuffer;
@@ -61,6 +94,8 @@ export async function toPMTiles(pbf, opts = {}) {
 	const minZoom = opts.minZoom ?? 0, maxZoom = opts.maxZoom ?? 14;
 	if (!(minZoom >= 0 && maxZoom >= minZoom && maxZoom <= 32 - extentShift && maxZoom - minZoom < 32)) throw new Error(`zoom 範囲が不正（0 ≤ min ≤ max ≤ ${32 - extentShift}）`);
 	const buffer = opts.buffer ?? 80, lodBias = opts.lodBias ?? 0;
+	const tinyPolygon = opts.tinyPolygon ?? 2, tinyLine = opts.tinyLine ?? 0;
+	if (!(tinyPolygon >= 0) || !(tinyLine >= 0)) throw new Error("tinyPolygon / tinyLine は 0 以上");
 	const layerName = opts.layer ?? pbf.name?.() ?? "layer";
 	const tileGzip = (opts.tileCompression ?? "gzip") === "gzip";
 	const stats = { engine: "cpu", vertices: 0, arcs: 0, kept: 0, tiles: 0, bytes: 0, workers: 0, ms: {} };
@@ -91,16 +126,19 @@ export async function toPMTiles(pbf, opts = {}) {
 	let total = 0; for (let i = 0; i < counts.length; i++) { offsets[i] = total; total += counts[i]; }
 	stats.kept = total;
 	const zoomTotal = (k) => (k + 1 < zoomCount ? offsets[(k + 1) * A] : total) - offsets[k * A];
+	// 面成分の元解像度の面積（極小判定用・tinyPolygon 0 なら不要）。GPU なら投影結果を読み戻す
+	let compArea = null;
+	if (tinyPolygon > 0 && d.polyStream?.length) { const ta = now(); const xy = proj.xy instanceof Uint32Array ? proj.xy : (await proj.read()).xy; compArea = componentAreas(d.polyStream, d.arcMeta, xy); stats.ms.area = now() - ta; }
 
 	// ── 属性 → tags（fid 毎に 1 回・worker へは配列で 1 回送る）
 	const tt = now();
-	const fields = new Map();
+	const fields = new Map(), keep = attrFilter(opts);
 	const tags = new Array(pbf.length);
-	for (let i = 0; i < pbf.length; i++) tags[i] = propsToTags(pbf.getProperties(i), fields);
+	for (let i = 0; i < pbf.length; i++) tags[i] = propsToTags(pbf.getProperties(i), fields, keep);
 	stats.ms.tags = now() - tt;
 	const dropRate = opts.dropRate ?? 2.5;
 	if (!(dropRate >= 1)) throw new Error("dropRate は 1 以上（1＝点を間引かない）");
-	const S = { arcCount: d.arcCount, nPts, point: d.point ? d.point.slice() : null, polyStream: d.polyStream ? d.polyStream.slice() : null, lineStream: d.lineStream ? d.lineStream.slice() : null, extent, buffer, layerName, tags, maxZoom, dropRate };
+	const S = { arcCount: d.arcCount, nPts, point: d.point ? d.point.slice() : null, polyStream: d.polyStream ? d.polyStream.slice() : null, lineStream: d.lineStream ? d.lineStream.slice() : null, extent, buffer, layerName, tags, maxZoom, dropRate, tinyPolygon, tinyLine, compArea, extentShift };
 
 	// ── worker プール（失敗したらインライン）
 	let pool = null;

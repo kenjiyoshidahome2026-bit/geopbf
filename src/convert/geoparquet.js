@@ -9,6 +9,7 @@ import { getDevice } from "./gpu.js";
 import { createEngine, cpuEngine } from "./engine.js";
 import { writeParquet, PT, REP } from "./parquet.js";
 import { zxyToTileId } from "./pmtiles.js";
+import { attrFilter } from "./attrs.js";
 
 const { TAGS } = GeoPBF;
 const WKB = { Point: 1, LineString: 2, Polygon: 3, MultiPoint: 4, MultiLineString: 5, MultiPolygon: 6, GeometryCollection: 7 };
@@ -92,10 +93,11 @@ const CRS84 = { "$schema": "https://proj.org/schemas/v0.7/projjson.schema.json",
 	scope: "Not known.", area: "World.", bbox: { south_latitude: -90, west_longitude: -180, north_latitude: 90, east_longitude: 180 }, id: { authority: "OGC", code: "CRS84" } };
 
 // 属性列の推定: GeoPBF の keys（"a.b" 平坦化済み）× 全行の値の型
-function inferColumns(pbf) {
+function inferColumns(pbf, keep = null) {
 	const rows = pbf.propertiesTable.slice(1), keys = pbf.keys;
 	const cols = [];
 	keys.forEach((key, ki) => {
+		if (keep && !keep(key)) return;
 		let kinds = 0, any = false;   // 1 bool / 2 int / 4 float / 8 string / 16 date / 32 other(json) / 64 skip(blob 等)
 		for (const row of rows) {
 			const v = row[ki];
@@ -207,7 +209,7 @@ export async function toGeoParquet(pbf, opts = {}) {
 	const rowGroupSize = opts.rowGroupSize ?? 65536;
 	const perm = spatialOrder(order, bb, (i) => !!wkb[i], pbf.length, rowGroupSize);
 	const row = perm ? (i) => perm[i] : (i) => i;
-	const props = inferColumns(pbf);
+	const props = inferColumns(pbf, attrFilter(opts));
 	const schema = [{ name: "schema", numChildren: props.length + 1 + (withBbox ? 1 : 0) }];
 	const columns = [];
 	for (const c of props) { schema.push({ name: c.name, type: c.type, repetition: REP.OPTIONAL, logical: c.logical }); columns.push({ path: [c.name], type: c.type, get: (i) => c.get(row(i)) }); }

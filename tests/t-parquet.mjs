@@ -152,6 +152,16 @@ print(json.dumps(out))
 	}
 }
 
+// ---- 列の選別 ------------------------------------------------------------------------------
+{
+	const names = (r) => r.geo && Object.keys(r.geo.columns) && null;   // geo メタは列選別と無関係
+	const ri = await toGeoParquet(pbf, { gpu: false, codec: "none", include: ["n"] }), rx = await toGeoParquet(pbf, { gpu: false, codec: "none", excludeAll: true });
+	ok(ri.buffer.length < r0.buffer.length && rx.buffer.length < ri.buffer.length, `include/excludeAll: 列が減って小さい（${r0.buffer.length} > ${ri.buffer.length} > ${rx.buffer.length}）`);
+	const txt = Buffer.from(rx.buffer).toString("latin1");
+	ok(!txt.includes("\x04nest") && txt.includes("geometry"), "excludeAll: footer に属性列名が無く geometry は残る");
+	names(ri);
+}
+
 // ---- 行グループ分割 -------------------------------------------------------------------------
 const r3 = await toGeoParquet(pbf, { gpu: false, rowGroupSize: 3, order: "none" });
 ok(r3.buffer.length > buf.length, "rowGroupSize=3 で 3 行グループ（footer が大きい）");

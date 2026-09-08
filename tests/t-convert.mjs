@@ -80,6 +80,12 @@ const pack = (ix, iy, rank, l1) => {
 	const r = clipRingHalf(sq, 0, 5, true);
 	ok(r && Array.from(r).join() === "0,0,5,0,5,10,0,10", `clipRingHalf x≤5: ${r && Array.from(r).join()}`);
 	ok(clipRingHalf(sq, 1, 20, false) === null, "clipRingHalf: 全外なら null");
+	// 切断線上の共線点の掃除：線上の頂点と交点が連続しても中央は残らない（面積は不変）
+	const spur = clipRingHalf([0, 0, 10, 0, 12, 5, 10, 10, 0, 10], 0, 10, true);
+	ok(spur && Array.from(spur).join() === "0,0,10,0,10,10,0,10", `clipRingHalf: 切断線上の共線 4 点 → 2 点（${spur && Array.from(spur).join()}）`);
+	const wrap = clipRingHalf([10, 2, 12, 4, 10, 6, 12, 8, 10, 10, 0, 10, 0, 0, 10, 0], 0, 10, true);
+	ok(wrap && wrap.length === 8 && Math.abs(signedArea2(wrap)) === 200, `clipRingHalf: 継ぎ目をまたぐ往復の棘も消える（${wrap && Array.from(wrap).join()}）`);
+	ok(clipRingHalf([10, 0, 10, 10, 12, 10, 12, 0], 0, 10, true) === null, "clipRingHalf: 線上の往復だけの環は消える");
 	const ls = clipLineHalf([0, 0, 10, 0, 10, 10, 0, 10], 0, 5, true);
 	ok(ls.length === 2 && ls[0].join() === "0,0,5,0" && ls[1].join() === "5,10,0,10", `clipLineHalf: 出入りで 2 本に分割（${JSON.stringify(ls)}）`);
 	const got = [];
