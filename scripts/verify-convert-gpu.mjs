@@ -14,7 +14,7 @@ const root = new URL("../", import.meta.url).pathname;
 const req = createRequire(import.meta.url);
 let pw = null;
 for (const c of ["playwright", "playwright-core", "/opt/node22/lib/node_modules/playwright/index.mjs", "/usr/lib/node_modules/playwright/index.mjs"]) {
-	try { pw = await import(c.startsWith("/") ? c : req.resolve(c)); break; } catch {}
+	try { const m = await import(c.startsWith("/") ? c : req.resolve(c)); pw = m.chromium ? m : m.default; if (pw?.chromium) break; pw = null; } catch {}
 }
 if (!pw) { console.error("playwright が見つからない（npm i -g playwright）"); process.exit(2); }
 
@@ -33,7 +33,10 @@ const srv = http.createServer(async (q, s) => {
 }).listen(0);
 const port = srv.address().port;
 
-const exe = [process.env.CHROMIUM_PATH, "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"].find(p => p && existsSync(p));
+// Chromium 実体: $CHROMIUM_PATH → playwright 自身の既定（`npx playwright install chromium` 済み）→ /opt/pw-browsers の任意版
+const pwExe = (() => { try { return pw.chromium.executablePath(); } catch { return null; } })();
+const optExe = (() => { try { const { readdirSync } = req("node:fs"); const base = "/opt/pw-browsers"; if (existsSync(base + "/chromium") && !req("node:fs").statSync(base + "/chromium").isDirectory()) return base + "/chromium"; for (const d of readdirSync(base)) for (const sub of ["chrome-linux/chrome", "chrome-linux64/chrome"]) { const p = `${base}/${d}/${sub}`; if (d.startsWith("chromium") && existsSync(p)) return p; } } catch {} return null; })();
+const exe = [process.env.CHROMIUM_PATH, pwExe, optExe].find(p => p && existsSync(p));
 const browser = await pw.chromium.launch({
 	headless: !process.argv.includes("--show"),
 	...(exe ? { executablePath: exe } : {}),

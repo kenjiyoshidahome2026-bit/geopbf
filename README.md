@@ -62,11 +62,13 @@ Output is gzipped by default (matching the GDAL driver's `COMPRESS=GZIP` and the
 FlatGeobuf and everything else GDAL reads — use the [GDAL/OGR driver](https://github.com/kenjiyoshidahome2026-bit/gdal-geopbf)
 (`ogr2ogr -f GeoPBF`, needs GDAL ≥ 3.12), or the browser workers in `src/index.js`.
 
-## PMTiles / GeoParquet — GPU-accelerated export (`geopbf/pmtiles`, `geopbf/geoparquet`)
+## PMTiles / GeoParquet export (`geopbf/pmtiles`, `geopbf/geoparquet`)
 
 The other direction: a GeoPBF (plus its Gint) goes out as a **PMTiles** archive of Mapbox Vector Tiles, or as a
-**GeoParquet** file — with the embarrassingly parallel parts of the job on the GPU (WebGPU compute), and a CPU
-path with the *same* integer arithmetic when there is no GPU. Zero new dependencies; the CLI runs on plain Node.
+**GeoParquet** file — with the embarrassingly parallel parts of the job (projection, per-zoom rank filtering,
+integer→double conversion, bboxes) on the GPU when WebGPU is there, and a CPU path with the *same* integer arithmetic
+when it is not. Zero new dependencies; the CLI runs on plain Node. Read the "Where the GPU is" paragraph below before
+expecting the GPU to change the wall-clock: on every dataset measured so far those stages are a few percent of the job.
 
 ```bash
 npx geopbf pmtiles countries.geopbf countries.pmtiles --maxzoom 10   # bakes Gint with WASM, then tiles from it
@@ -116,8 +118,22 @@ typed-array based, stops bisecting as soon as a sub-range of tiles is provably i
 instead of one clip per tile), encodes the attribute section once per feature, and hashes tile content before copying
 it. Measured on Natural Earth 10m countries (258 polygons, 480k vertices), z0–10 = 573,898 tiles / 151.5 MB, 4-core
 Node: 5.3–5.9 s with 4 workers (the default is one per core; 3 → 5.8 s, 5–7 → 5.5–6.8 s), 16–18 s single-threaded, of which zlib is ≈8 s (85k unique tiles, ~90 µs each regardless
-of level); Chromium z0–8 takes ≈5.7 s with 3 workers. The GPU stage is ≈150 ms of that on a software adapter
-(SwiftShader) — real-GPU numbers were not measurable in the CI container.
+of level); Chromium z0–8 takes ≈5.7 s with 3 workers.
+
+**Where the GPU is, honestly.** The kernels that run on the GPU are projection, the per-zoom rank filter with its
+count/prefix-sum/write, the integer→double conversion and the bbox reduction. Everything after them — ring assembly,
+clipping, MVT encoding, gzip, PMTiles/Parquet writing — is CPU work in workers, and it dominates. Measured shares of
+the GPU-able stages on the CPU path (4-core Node): Natural Earth countries z0–10, 480k vertices: 0.16 s of 5.6 s
+(3 %); a synthetic parcel map of 200,000 polygons / 8.2M vertices (4.4M after Gint's shared-arc dedupe) z0–16,
+43,880 tiles / 185 MB: 2.1 s of 41.5 s (5 %); 1,000,000 points z0–10: 0.9 s of 14.6 s (6 %). By Amdahl's law a GPU
+that made those stages free would shave at most that much. The honest reading is that the GPU is a nicety for the
+browser (it keeps the main thread free and scales flatly with vertex count), not the reason the converter is fast —
+the speed comes from Gint (rank filter instead of per-zoom simplification, one arc per shared border) and from the
+assembly stage. Real-GPU timings could not be measured in the CI container; on SwiftShader (a software Vulkan) the
+GPU path is slower than the CPU path, as expected, and produces identical bytes (`scripts/verify-convert-gpu.mjs --bench`).
+Chromium on the same parcel map, z0–12 (`--bench big_raw --maxzoom 12`): CPU path project+LOD 0.8 s + write 0.9 s of
+28.7 s; SwiftShader path 1.5 s + 1.4 s (software "GPU", slower), bytes identical; GeoParquet kernels 0.2 s on the CPU
+vs 2.1 s on SwiftShader, identical output.
 
 Where the GPU is not: Node has no `navigator.gpu`. `npm i webgpu` (Dawn) gives the CLI a real adapter; without it,
 `--gpu` reports the fallback and runs the CPU path — same bytes out. Deno's built-in WebGPU works as is. In the

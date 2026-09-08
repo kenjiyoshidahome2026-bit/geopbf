@@ -2,9 +2,37 @@
 	"name": "geopbf",
 	"version": "1.5.0",
 	"description": "Carry geometry as geometry. GeoPBF is a compact binary container for geospatial features, with Gint — a GPU-readable topology layer for instant point-in-polygon identify, shared-edge topology and choropleth painting. Converts GeoJSON / Shapefile / KML / KMZ / GPX / GML / FlatGeobuf / TopoJSON in the browser via workers + WASM. Zero servers.",
-	"keywords": ["geospatial", "gis", "geojson", "shapefile", "topojson", "kml", "gpx", "flatgeobuf", "cog", "geotiff", "raster", "vector", "topology", "point-in-polygon", "identify", "wasm", "browser", "format", "pmtiles", "geoparquet", "parquet", "mvt", "vector-tiles", "webgpu"],
+	"keywords": [
+		"geospatial",
+		"gis",
+		"geojson",
+		"shapefile",
+		"topojson",
+		"kml",
+		"gpx",
+		"flatgeobuf",
+		"cog",
+		"geotiff",
+		"raster",
+		"vector",
+		"topology",
+		"point-in-polygon",
+		"identify",
+		"wasm",
+		"browser",
+		"format",
+		"pmtiles",
+		"geoparquet",
+		"parquet",
+		"mvt",
+		"vector-tiles",
+		"webgpu"
+	],
 	"homepage": "https://www.ortho-earth.com/docs/geopbf.html",
-	"repository": { "type": "git", "url": "git+https://github.com/kenjiyoshidahome2026-bit/geopbf.git" },
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/kenjiyoshidahome2026-bit/geopbf.git"
+	},
 	"author": "Kenji Yoshida <kenji.yoshida.home.2026@gmail.com>",
 	"license": "MIT",
 	"type": "module",
@@ -13,7 +41,9 @@
 		"src",
 		"wasm/pkg"
 	],
-	"bin": { "geopbf": "./bin/geopbf.mjs" },
+	"bin": {
+		"geopbf": "./bin/geopbf.mjs"
+	},
 	"main": "src/index.js",
 	"exports": {
 		".": "./src/index.js",
@@ -50,6 +80,7 @@
 		"test:edit": "node tests/edit/t-model.mjs && node tests/edit/t-snap.mjs && node tests/edit/t-roundtrip.mjs && node tests/edit/t-history.mjs && node tests/edit/t-combine.mjs && node tests/edit/t-large.mjs && node tests/edit/t-large-edit.mjs",
 		"summary": "repomix --style markdown --output project_summary.md",
 		"verify:npm": "node scripts/verify-npm.mjs",
+		"verify:all": "npm test && npm run verify:gpu && npm run verify:npm",
 		"mirror": "git -C ../.. subtree split --prefix=packages/geopbf -b geopbf-mirror && git -C ../.. push https://github.com/kenjiyoshidahome2026-bit/geopbf.git geopbf-mirror:main --force && git -C ../.. branch -D geopbf-mirror"
 	},
 	"dependencies": {
@@ -58,8 +89,10 @@
 	"devDependencies": {
 		"@loaders.gl/core": "^4.3.0",
 		"leaflet": "^1.9.4",
-		"ol": "^10.0.0",
 		"maplibre-gl": "^5.0.0",
-		"repomix": "^1.14.0"
+		"ol": "^10.0.0",
+		"playwright": "^1.63.0",
+		"repomix": "^1.14.0",
+		"vite": "^8.2.2"
 	}
 }
