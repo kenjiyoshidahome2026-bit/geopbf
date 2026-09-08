@@ -97,9 +97,10 @@ function geometryCommands(type, parts, g) {
 	return any;
 }
 
-// 値 1 個の Value メッセージ
+// 値 1 個の Value メッセージ（Uint8Array は UTF-8 済みの文字列＝そのまま書く）
 function writeValue(V, v) {
 	if (typeof v === "string") V.string(1, v);
+	else if (v instanceof Uint8Array) V.bytes(1, v);
 	else if (typeof v === "boolean") V.uint(7, v ? 1 : 0);
 	else if (Number.isInteger(v) && Math.abs(v) < 2 ** 53) { if (v >= 0) V.uint(5, v); else V.sint(6, v); }
 	else V.double(3, v);

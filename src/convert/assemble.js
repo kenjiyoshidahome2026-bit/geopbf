@@ -1,8 +1,9 @@
 // convert/assemble.js ── 1 ズーム × タイル列範囲の「組立→クリップ→MVT→内容キー」。worker（tile-worker.js）と
 // インライン経路（workers:0）の共通本体＝純関数。bare import 無し（worker がバンドラ無しで読める）。
 //
-// S（静的・worker 初期化時に 1 回）: { arcCount, nPts, point, polyStream, lineStream, extent, buffer, layerName, tags,
-//    maxZoom, dropRate, tinyPolygon, tinyLine, compArea（面成分の元解像度の面積×2・世界座標尺）, extentShift }
+// S（静的・worker 初期化時に 1 回）: { arcCount, nPts, point, polyStream, lineStream, extent, buffer, layerName,
+//    tagTable（tagtable.js の表）か tags（fid → [[k,v]]）, featureCount, maxZoom, dropRate, tinyPolygon, tinyLine,
+//    compArea（面成分の元解像度の面積×2・世界座標尺）, extentShift }
 // J（job）: { z, txFrom, txTo, counts, bbox, offs, out }   … このズームの arc 別 件数/外接/先頭位置（out 内）/圧縮座標
 // 戻り: { tiles: [{ id, key }], contents: [[key, Uint8Array(未圧縮 MVT)]] }
 //
@@ -12,15 +13,17 @@
 import { splitToTiles } from "./clip.js";
 import { encodeTile, encodeSingle, encodeAttrs, signedArea2 } from "./mvt.js";
 import { zxyToTileId, contentKey, sameBytes } from "./pmtiles.js";
+import { tagReader } from "./tagtable.js";
 
 export function assembleZoom(S, J) {
-	const { arcCount, nPts, point, polyStream: ps, lineStream: ls, extent, buffer, layerName, tags } = S;
+	const { arcCount, nPts, point, polyStream: ps, lineStream: ls, extent, buffer, layerName } = S;
+	const tagsOf = S._tagsOf ??= S.tagTable ? tagReader(S.tagTable) : (fid) => S.tags[fid];
 	const { z, counts, bbox, offs, out } = J;
 	const tinyA2 = 2 * (S.tinyPolygon ?? 0), tinyL = S.tinyLine ?? 0;   // 面積 ×2 で比べる（signedArea2 と同じ尺度）
 	const compArea = tinyA2 ? S.compArea : null, areaScale = Math.pow(4, z + (S.extentShift ?? 12) - 32);   // 世界座標尺 → このズームのタイル座標尺
 	const txRange = [J.txFrom, J.txTo];
-	const attrCache = S._attr ??= new Array(tags.length);   // fid → encodeAttrs（worker 内で永続）
-	const attrOf = (fid) => attrCache[fid] ??= encodeAttrs(tags[fid]);
+	const attrCache = S._attr ??= new Array(S.featureCount ?? S.tags?.length ?? 0);   // fid → encodeAttrs（worker 内で永続）
+	const attrOf = (fid) => attrCache[fid] ??= encodeAttrs(tagsOf(fid));
 	const tileMap = new Map();
 	const tileOf = (tx, ty) => { const key = tx * 4294967296 + ty; let t = tileMap.get(key); if (!t) { t = { tx, ty, polys: new Map(), lines: new Map(), points: new Map() }; tileMap.set(key, t); } return t; };
 	const fullRanges = [];   // [fid, tx0, tx1, ty0, ty1] … 全面塗りが確定した範囲
@@ -182,9 +185,9 @@ export function assembleZoom(S, J) {
 			continue;
 		}
 		const features = [];
-		for (const [fid, polys] of t.polys) features.push({ id: fid, type: 3, tags: tags[fid], geometry: polys.map(rings => rings.map(local)) });
-		for (const [fid, lines] of t.lines) features.push({ id: fid, type: 2, tags: tags[fid], geometry: lines.map(local) });
-		for (const [fid, pts] of t.points) features.push({ id: fid, type: 1, tags: tags[fid], geometry: local(pts) });
+		for (const [fid, polys] of t.polys) features.push({ id: fid, type: 3, tags: tagsOf(fid), geometry: polys.map(rings => rings.map(local)) });
+		for (const [fid, lines] of t.lines) features.push({ id: fid, type: 2, tags: tagsOf(fid), geometry: lines.map(local) });
+		for (const [fid, pts] of t.points) features.push({ id: fid, type: 1, tags: tagsOf(fid), geometry: local(pts) });
 		const view = encodeTile({ name: layerName, extent, features });
 		if (!view) continue;   // 退化して feature が残らないタイルは書かない
 		tiles.push({ id, key: keyOf(view) });

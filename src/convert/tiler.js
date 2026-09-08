@@ -17,6 +17,7 @@ import { createPool, defaultWorkers } from "./pool.js";
 import { gzipMany } from "./gzip.js";
 import { assemblePMTiles, sameBytes } from "./pmtiles.js";
 import { attrFilter } from "./attrs.js";
+import { buildTagTable } from "./tagtable.js";
 export { attrFilter };
 
 // lodBias: 正で閾値を上げる＝残る頂点が減る（3 で VW 面積 4 倍＝線形で 2 倍粗い相当）。負で細かく。
@@ -130,22 +131,21 @@ export async function toPMTiles(pbf, opts = {}) {
 	let compArea = null;
 	if (tinyPolygon > 0 && d.polyStream?.length) { const ta = now(); const xy = proj.xy instanceof Uint32Array ? proj.xy : (await proj.read()).xy; compArea = componentAreas(d.polyStream, d.arcMeta, xy); stats.ms.area = now() - ta; }
 
-	// ── 属性 → tags（fid 毎に 1 回・worker へは配列で 1 回送る）
+	// ── 属性 → typed array 表（キー辞書・UTF-8 文字列辞書・feature 別エントリ）＝worker へは memcpy で渡る
+	//（fid 毎の [[k,v],…] 配列の構造化クローンは 100 万件で worker あたり 4 秒＝直列で 16 秒掛かっていた）
 	const tt = now();
 	const fields = new Map(), keep = attrFilter(opts);
-	const tags = new Array(pbf.length);
-	for (let i = 0; i < pbf.length; i++) tags[i] = propsToTags(pbf.getProperties(i), fields, keep);
+	const tagTable = buildTagTable(pbf, keep, fields);
 	stats.ms.tags = now() - tt;
 	const dropRate = opts.dropRate ?? 2.5;
 	if (!(dropRate >= 1)) throw new Error("dropRate は 1 以上（1＝点を間引かない）");
-	const S = { arcCount: d.arcCount, nPts, point: d.point ? d.point.slice() : null, polyStream: d.polyStream ? d.polyStream.slice() : null, lineStream: d.lineStream ? d.lineStream.slice() : null, extent, buffer, layerName, tags, maxZoom, dropRate, tinyPolygon, tinyLine, compArea, extentShift };
+	const S = { arcCount: d.arcCount, nPts, point: d.point ? d.point.slice() : null, polyStream: d.polyStream ? d.polyStream.slice() : null, lineStream: d.lineStream ? d.lineStream.slice() : null, extent, buffer, layerName, tagTable, featureCount: pbf.length, maxZoom, dropRate, tinyPolygon, tinyLine, compArea, extentShift };
 
 	// ── worker プール（失敗したらインライン）
 	let pool = null;
 	const NW = opts.workers ?? await defaultWorkers();
 	const ti = now();
-	// tags（fid 毎の [[k,v],…]）は構造化クローンだと 100 万件で worker あたり 3 秒＝JSON 文字列 1 本で渡し worker 側で parse
-	if (NW > 0) { try { pool = await createPool(NW); await pool.init({ ...S, tags: null, tagsJson: JSON.stringify(tags) }); } catch (e) { pool = null; opts.onWarn?.(e); } }
+	if (NW > 0) { try { pool = await createPool(NW); await pool.init(S); } catch (e) { pool = null; opts.onWarn?.(e); } }
 	stats.workers = pool ? NW : 0;
 	stats.ms.pool_init = now() - ti;
 

@@ -31,7 +31,7 @@ const fc = { type: "FeatureCollection", features: [
 	{ type: "Feature", properties: { n: "H" }, geometry: { type: "Polygon", coordinates: [sq(20, 20, 30, 30), sq(23, 23, 27, 27)] } },
 	{ type: "Feature", properties: { n: "MP" }, geometry: { type: "MultiPolygon", coordinates: [[sq(40, 40, 41, 41)], [sq(42, 40, 43, 41)]] } },
 	{ type: "Feature", properties: { n: "L", d: new Date(0) }, geometry: { type: "LineString", coordinates: [[10, 9], [10.5, 8.5], [11, 9]] } },
-	{ type: "Feature", properties: { n: "P" }, geometry: { type: "Point", coordinates: [10.5, 10.5] } },
+	{ type: "Feature", properties: { n: "P", u: "駅・café", big: 2 ** 40, neg: -7, z: 0, f: false, nest: { a: "x", b: 1 } }, geometry: { type: "Point", coordinates: [10.5, 10.5] } },
 	{ type: "Feature", properties: { n: "MPt" }, geometry: { type: "MultiPoint", coordinates: [[1, 1], [2, 2]] } },
 	{ type: "Feature", properties: { n: "T" }, geometry: { type: "Polygon", coordinates: [sq(15, 15, 15.01, 15.01)] } },   // 極小（z0 で 0.01 単位²）
 	{ type: "Feature", properties: { n: "Dust" }, geometry: { type: "MultiPolygon", coordinates: Array.from({ length: 100 }, (_, i) => [sq(35 + (i % 10) * 0.1, 35 + Math.floor(i / 10) * 0.1, 35.05 + (i % 10) * 0.1, 35.05 + Math.floor(i / 10) * 0.1)]) } },   // 小島 100（z0 で各 0.3 単位²）
@@ -56,6 +56,11 @@ ok(t0 && t0.name === "fix" && t0.features.length === 8, `z0: 8 feature（${t0?.f
 const byId = new Map(t0.features.map(f => [f.id, f]));
 ok(byId.get(0).type === 3 && byId.get(4).type === 2 && byId.get(5).type === 1 && byId.get(6).type === 1, "z0: 型（面/線/点/多点）");
 ok(byId.get(0).props.n === "A" && byId.get(0).props.v === 1 && byId.get(1).props.b === true && byId.get(4).props.d === "1970-01-01T00:00:00.000Z", "z0: 属性（Date は ISO 文字列）");
+{
+	const p = byId.get(5).props;
+	ok(p.u === "駅・café" && p.big === 2 ** 40 && p.neg === -7 && p.z === 0 && p.f === false && p["nest.a"] === "x" && p["nest.b"] === 1, `z0: 属性表の往復（UTF-8・大きな整数・負数・0・false・入れ子 "nest.a"）${JSON.stringify(p)}`);
+	ok(pm.metadata.vector_layers[0].fields.u === "String" && pm.metadata.vector_layers[0].fields.f === "Boolean" && pm.metadata.vector_layers[0].fields["nest.b"] === "Number", "メタ: 属性表から集めた fields の型");
+}
 ok(byId.get(2).geometry.length === 2 && signedArea2(byId.get(2).geometry[0]) > 0 && signedArea2(byId.get(2).geometry[1]) < 0, "z0: 穴付き面＝外環正・穴負");
 ok(byId.get(3).geometry.length === 2 && byId.get(3).geometry.every(g => signedArea2(g) > 0), "z0: MultiPolygon は外環 2 つ");
 ok(byId.get(6).geometry.length === 2, "z0: MultiPoint 2 点");

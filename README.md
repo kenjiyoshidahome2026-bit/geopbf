@@ -141,6 +141,9 @@ city-sized area 50 → 3–4 → 2 → 1–2. `"morton"` is the Gint-native key 
 by default because it is what the pruning keys on; `bboxColumn: "auto"` drops it for point-only data (half the size,
 no pruning).
 
+Attributes travel to the workers as one typed-array table (key dictionary, UTF-8 string dictionary, per-feature entry
+list) instead of a million small arrays: worker start-up for 1,000,000 features dropped from 16 s to 1.6 s and the
+string bytes are written into the tiles as they are, without a second UTF-8 encoding.
 Points skip the clipping tree entirely (tile index by shift, buffer copies to neighbours) and are thinned at lower zooms
 like tippecanoe's `-r`: `dropRate` 2.5 keeps 1/2.5 of the points per zoom step below `maxZoom`, chosen by a hash of the
 feature id so the kept sets nest; `dropRate: 1` keeps every point in every tile. Point-only datasets get no `bbox`
@@ -153,8 +156,8 @@ interior tiles are byte-for-byte the same size apart from the layer name and the
 difference is vertex retention: the Gint rank threshold keeps somewhat more coastline vertices at mid zooms than
 tippecanoe's Douglas-Peucker. `lodBias` moves that knob — `+3` raises the threshold by one rank step (≈2× coarser
 linearly), `+6` lands on tippecanoe's size, negative values keep more. GDAL's PMTiles driver (3.12) took 780 s for the
-same job. Points (1,000,000 synthetic, 4 attributes, z0–10): geopbf 24 s / 51 MB with the default `dropRate`
-(tippecanoe defaults 31 s / 42 MB), 55 s / 270 MB keeping every point (tippecanoe `-r1` 65 s / 221 MB); GeoParquet
+same job. Points (1,000,000 synthetic, 4 attributes, z0–10): geopbf 14.6 s / 51 MB with the default `dropRate`
+(tippecanoe defaults 31 s / 42 MB), 42 s / 270 MB keeping every point (tippecanoe `-r1` 65 s / 221 MB); GeoParquet
 with STR ordering and the bbox column 8.5 s / 47 MB, without the bbox column 20 MB (geopandas 4.9 s write / 20.2 MB,
 unsorted, no bbox column).
 
