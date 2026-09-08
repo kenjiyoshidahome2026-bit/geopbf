@@ -78,7 +78,7 @@ const pack = (ix, iy, rank, l1) => {
 {
 	const sq = [0, 0, 10, 0, 10, 10, 0, 10];
 	const r = clipRingHalf(sq, 0, 5, true);
-	ok(r && r.join() === "0,0,5,0,5,10,0,10", `clipRingHalf x≤5: ${r?.join()}`);
+	ok(r && Array.from(r).join() === "0,0,5,0,5,10,0,10", `clipRingHalf x≤5: ${r && Array.from(r).join()}`);
 	ok(clipRingHalf(sq, 1, 20, false) === null, "clipRingHalf: 全外なら null");
 	const ls = clipLineHalf([0, 0, 10, 0, 10, 10, 0, 10], 0, 5, true);
 	ok(ls.length === 2 && ls[0].join() === "0,0,5,0" && ls[1].join() === "5,10,0,10", `clipLineHalf: 出入りで 2 本に分割（${JSON.stringify(ls)}）`);

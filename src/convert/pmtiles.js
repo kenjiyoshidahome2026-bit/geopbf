@@ -160,10 +160,10 @@ export async function assemblePMTiles(items, contents, metadata = {}, opts = {})
 	u64(72, entries.reduce((s, e) => s + e.runLength, 0)); u64(80, entries.length); u64(88, chunks.length);
 	header[96] = 1;   // clustered（tileId 順に格納）
 	header[97] = COMP[ic]; header[98] = COMP[tc]; header[99] = tileType;
-	let zmin = 30, zmax = 0;
-	for (const it of items) { const z = tileIdToZxy(it.id)[0]; if (z < zmin) zmin = z; if (z > zmax) zmax = z; }
-	header[100] = opts.minZoom ?? (items.length ? zmin : 0);
-	header[101] = opts.maxZoom ?? (items.length ? zmax : 0);
+	let zmin = 0, zmax = 0;
+	if (opts.minZoom === undefined || opts.maxZoom === undefined) { zmin = 30; for (const it of items) { const z = tileIdToZxy(it.id)[0]; if (z < zmin) zmin = z; if (z > zmax) zmax = z; } if (!items.length) zmin = 0; }
+	header[100] = opts.minZoom ?? zmin;
+	header[101] = opts.maxZoom ?? zmax;
 	const b = opts.bounds ?? [-180, -85.051129, 180, 85.051129];
 	const e7 = (v) => Math.round(v * 1e7);
 	dv.setInt32(102, e7(b[0]), true); dv.setInt32(106, e7(b[1]), true); dv.setInt32(110, e7(b[2]), true); dv.setInt32(114, e7(b[3]), true);
