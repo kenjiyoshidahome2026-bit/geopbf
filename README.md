@@ -294,7 +294,7 @@ Workers are declared as `new Worker(new URL("./…", import.meta.url), { type: "
 export default { worker: { format: "es" } };
 ```
 
-Runtime dependencies: `pbf` (protobuf reader) and `pako` (raw-deflate for one decoder). Requires a browser with `CompressionStream` (all evergreen browsers).
+Runtime dependency: `pbf` (protobuf reader) only. Compression and decompression everywhere — gzip/deflate for GeoPBF, ZIP/Shapefile/MOJ decoders, COG tiles, PMTiles and Parquet — go through the platform's native codecs (`CompressionStream`/`DecompressionStream` in browsers and workers, `node:zlib` in Node); pako was removed in 1.5. Requires a browser with `CompressionStream` (all evergreen browsers).
 
 ## License
 

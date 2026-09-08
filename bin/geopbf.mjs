@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // geopbf CLI ── ブラウザを開かずに GeoJSON ⇄ GeoPBF を往復し、gint の効き目を数字で見るための入口。
 //
-// 依存はこのパッケージ自身と Node 組み込みのみ（pbf / pako は geopbf の既存依存）。
+// 依存はこのパッケージ自身と Node 組み込みのみ（pbf は geopbf の既存依存・圧縮は node:zlib）。
 // Worker と DOM を使う src/index.js は通さず、Node でそのまま動く pbf-base / extension/gint を直に叩く。
 // ImageData は pbf-base のエンコード経路が参照するが Node に無いので、tests/t-loaders.mjs と同じ手で補う。
 import { readFile, writeFile } from "node:fs/promises";
