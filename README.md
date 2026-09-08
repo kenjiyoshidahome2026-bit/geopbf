@@ -123,7 +123,18 @@ Where the GPU is not: Node has no `navigator.gpu`. `npm i webgpu` (Dawn) gives t
 browser everything is automatic.
 
 Options — `toPMTiles(pbf, { gint, minZoom=0, maxZoom=14, extent=4096, buffer=80, layer, lodBias=0, dropRate=2.5, tileCompression:"gzip", gpu, workers, onProgress })`,
-`toGeoParquet(pbf, { codec:"gzip"|"none", rowGroupSize=65536, bboxColumn="auto", geometryName="geometry", gpu })`.
+`toGeoParquet(pbf, { codec:"gzip"|"none", rowGroupSize=65536, order="str", bboxColumn=true, geometryName="geometry", gpu })`.
+Rows in the Parquet file are **spatially ordered** (`order`, default `"str"`): feature bbox centres are packed
+Sort-Tile-Recursive style — sorted by x, cut into √P slices of `rowGroupSize` multiples, each slice sorted by y — so
+every row group's `bbox` statistics cover a disjoint patch and a reader that pushes an area filter down (DuckDB,
+pyarrow datasets, GeoPandas) fetches only the row groups that intersect it. This follows Kanahiro Iguchi's
+*Spatial sort for well-packed GeoParquet* (CNG Japan 2026); replicated here on 1,000,000 points in 50 row groups:
+row-group bbox overlap ratio `none` 24.5 → `morton` 0.87 → `hilbert` 0.28 → `str` 0.00, candidate row groups for a
+city-sized area 50 → 3–4 → 2 → 1–2. `"morton"` is the Gint-native key (cheapest, still 10× better than unsorted),
+`"hilbert"` the usual answer, `"none"` keeps input order so that row index = feature id. The `bbox` column is written
+by default because it is what the pruning keys on; `bboxColumn: "auto"` drops it for point-only data (half the size,
+no pruning).
+
 Points skip the clipping tree entirely (tile index by shift, buffer copies to neighbours) and are thinned at lower zooms
 like tippecanoe's `-r`: `dropRate` 2.5 keeps 1/2.5 of the points per zoom step below `maxZoom`, chosen by a hash of the
 feature id so the kept sets nest; `dropRate: 1` keeps every point in every tile. Point-only datasets get no `bbox`
@@ -138,7 +149,8 @@ tippecanoe's Douglas-Peucker. `lodBias` moves that knob — `+3` raises the thre
 linearly), `+6` lands on tippecanoe's size, negative values keep more. GDAL's PMTiles driver (3.12) took 780 s for the
 same job. Points (1,000,000 synthetic, 4 attributes, z0–10): geopbf 24 s / 51 MB with the default `dropRate`
 (tippecanoe defaults 31 s / 42 MB), 55 s / 270 MB keeping every point (tippecanoe `-r1` 65 s / 221 MB); GeoParquet
-6.8 s / 20.4 MB (geopandas 4.9 s write / 20.2 MB).
+with STR ordering and the bbox column 8.5 s / 47 MB, without the bbox column 20 MB (geopandas 4.9 s write / 20.2 MB,
+unsorted, no bbox column).
 
 ## COG — Cloud Optimized GeoTIFF (`geopbf/cog`)
 

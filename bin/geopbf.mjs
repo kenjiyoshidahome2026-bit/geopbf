@@ -34,6 +34,8 @@ const USAGE = `geopbf <command>
        [--drop-rate R]              点の低ズーム間引き率（tippecanoe -r 相当・既定 2.5・1＝全点保持）
   parquet <in.geopbf> <out.parquet>  GeoPBF を GeoParquet（WKB・bbox 列・gzip）へ
        [--compression gzip|none] [--row-group N] [--gpu | --no-gpu]
+       [--order str|hilbert|morton|none]  行の空間整列（既定 str＝行グループ bbox が重ならない・none＝入力順）
+       [--no-bbox]                  bbox 覆域列を書かない（点データで半分の大きさ・刈り込みは失う）
 
   入力の gzip は拡張子によらず署名（1f 8b）で判別して透過的に展開する。
 `;
@@ -286,16 +288,16 @@ async function pmtiles(argv) {
 
 async function parquet(argv) {
 	const { toGeoParquet } = await import("../src/convert/geoparquet.js");
-	const { pos: [inPath, outPath], opts } = parseArgs(argv, ["compression", "row-group"]);
+	const { pos: [inPath, outPath], opts } = parseArgs(argv, ["compression", "row-group", "order"]);
 	if (!inPath || !outPath) throw new Error("parquet <in.geopbf> <out.parquet>");
 	const pbf = await openPbf(inPath);
 	const wantGpu = gpuOpt(opts);
 	if (wantGpu === true) { const { findGPU } = await import("../src/convert/gpu.js"); if (!(await findGPU())) console.error("--gpu: WebGPU が見つからない（Node は `npm i webgpu`）＝CPU 経路で続行"); }
-	const r = await toGeoParquet(pbf, { gpu: wantGpu, codec: opts.compression || "gzip", rowGroupSize: opts["row-group"] ? +opts["row-group"] : undefined });
+	const r = await toGeoParquet(pbf, { gpu: wantGpu, codec: opts.compression || "gzip", rowGroupSize: opts["row-group"] ? +opts["row-group"] : undefined, order: opts.order, bboxColumn: opts["no-bbox"] ? false : undefined });
 	await writeFile(outPath, r.buffer);
 	const s = r.stats;
 	console.log(`${inPath}  features ${num(s.features)}  頂点 ${num(s.vertices)}`);
-	console.log(`${outPath}  ${mb(s.bytes)}  ${r.geo.columns.geometry.geometry_types.join("/")}  ${engineNote(s)}`);
+	console.log(`${outPath}  ${mb(s.bytes)}  ${r.geo.columns.geometry.geometry_types.join("/")}  order ${s.order}  ${engineNote(s)}`);
 	console.log(`  復号 ${s.ms.decode.toFixed(0)} ms・double/bbox ${s.ms.kernels.toFixed(0)} ms・WKB ${s.ms.wkb.toFixed(0)} ms・Parquet ${s.ms.parquet.toFixed(0)} ms・合計 ${s.ms.total.toFixed(0)} ms`);
 }
 

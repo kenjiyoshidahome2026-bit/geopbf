@@ -28,7 +28,7 @@ const fc = { type: "FeatureCollection", features: [
 ] };
 const pbf = await new GeoPBF({ name: "fix", precision: 6, attribution: "t-parquet" }).set(structuredClone(fc));
 const gj = pbf.geojson;
-const r = await toGeoParquet(pbf, { gpu: false });
+const r = await toGeoParquet(pbf, { gpu: false, order: "none" });   // 行順の検定は入力順で（空間整列は後段で別に検定）
 const buf = r.buffer;
 ok(r.stats.engine === "cpu" && r.stats.features === 8 && r.stats.vertices === 29, `toGeoParquet: ${buf.length} B・頂点 ${r.stats.vertices}`);
 const magic = (o) => String.fromCharCode(...buf.subarray(o, o + 4));
@@ -39,7 +39,7 @@ ok(r.geo.columns.geometry.encoding === "WKB" && r.geo.columns.geometry.geometry_
 ok(r.geo.columns.geometry.bbox.join() === "0.5,0.5,139.8,35.8" && r.geo.columns.geometry.covering.bbox.xmin.join() === "bbox,xmin", "geo メタ: bbox と covering");
 
 // ---- WKB を自前で復号して GeoJSON と一致（無圧縮・1 行グループで geometry 列の PLAIN を直読み）----------
-const r0 = await toGeoParquet(pbf, { gpu: false, codec: "none" });
+const r0 = await toGeoParquet(pbf, { gpu: false, codec: "none", order: "none" });
 const u8 = r0.buffer, dv = new DataView(u8.buffer, u8.byteOffset);
 // WKB（LE）→ GeoJSON 幾何
 function readWkb(p) {
@@ -107,22 +107,60 @@ else {
 	ok(o.created === "geopbf" && o.kv.includes("geopbf:attribution"), "pyarrow: created_by と geopbf:attribution");
 }
 
-// ---- 点だけのデータは bbox 列を省く（auto）----
+// ---- bbox 列の既定は true・"auto" なら点だけのデータで省く ----
 {
 	const pp = await new GeoPBF({ name: "p" }).set({ type: "FeatureCollection", features: [{ type: "Feature", properties: { a: 1 }, geometry: { type: "Point", coordinates: [1, 2] } }] });
-	const ra = await toGeoParquet(pp, { gpu: false, codec: "none" }), rb = await toGeoParquet(pp, { gpu: false, codec: "none", bboxColumn: true });
-	ok(!ra.geo.columns.geometry.covering && rb.geo.columns.geometry.covering && ra.buffer.length < rb.buffer.length, "点だけのデータは bbox 列を省く（bboxColumn:true で強制）");
+	const ra = await toGeoParquet(pp, { gpu: false, codec: "none", bboxColumn: "auto" }), rb = await toGeoParquet(pp, { gpu: false, codec: "none" });
+	ok(!ra.geo.columns.geometry.covering && rb.geo.columns.geometry.covering && ra.buffer.length < rb.buffer.length, 'bbox 列: 既定は書く・"auto" は点だけのデータで省く');
+}
+
+// ---- 行の空間整列（order）: str は行グループ bbox が互いに重ならない・none は入力順・行の属性と幾何は一緒に動く ----
+{
+	let sd = 5; const rnd = () => (sd = (sd * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+	const N = 3000, feats = Array.from({ length: N }, (_, i) => ({ type: "Feature", properties: { i, lon: 0 }, geometry: { type: "Point", coordinates: [+(130 + rnd() * 10).toFixed(5), +(30 + rnd() * 10).toFixed(5)] } }));
+	feats.forEach(f => { f.properties.lon = f.geometry.coordinates[0]; });
+	const pp = await new GeoPBF({ name: "pts", precision: 5 }).set(structuredClone(feats.length ? { type: "FeatureCollection", features: feats } : null));
+	const res = {};
+	for (const order of ["none", "morton", "hilbert", "str"]) { res[order] = await toGeoParquet(pp, { gpu: false, codec: "none", rowGroupSize: 500, order }); writeFileSync(join(dir, `ord-${order}.parquet`), res[order].buffer); }
+	ok(res.str.stats.order === "str", "order が stats に載る");
+	const chk = spawnSync("python3", ["-c", `
+import json, sys, itertools, struct
+try:
+    import pyarrow.parquet as pq
+except Exception: print("NOPYARROW"); sys.exit(0)
+out = {}
+for order in ["none", "morton", "hilbert", "str"]:
+    f = sys.argv[1] + "/ord-" + order + ".parquet"; md = pq.read_metadata(f); names = [md.schema.column(i).path for i in range(md.num_columns)]
+    ci = {n: names.index(n) for n in ["bbox.xmin", "bbox.ymin", "bbox.xmax", "bbox.ymax"]}
+    boxes = [(rg.column(ci["bbox.xmin"]).statistics.min, rg.column(ci["bbox.ymin"]).statistics.min, rg.column(ci["bbox.xmax"]).statistics.max, rg.column(ci["bbox.ymax"]).statistics.max) for rg in (md.row_group(r) for r in range(md.num_row_groups))]
+    ov = 0.0
+    for a, b in itertools.combinations(boxes, 2):
+        w = min(a[2], b[2]) - max(a[0], b[0]); h = min(a[3], b[3]) - max(a[1], b[1])
+        if w > 0 and h > 0: ov += w * h
+    area = sum((b[2]-b[0])*(b[3]-b[1]) for b in boxes)
+    t = pq.read_table(f).to_pylist()
+    consistent = all(abs(struct.unpack("<d", r["geometry"][5:13])[0] - r["lon"]) < 1e-9 for r in t)
+    out[order] = {"rg": md.num_row_groups, "ovRatio": ov / area, "row0": t[0]["i"], "consistent": consistent, "rows": len(t)}
+print(json.dumps(out))
+`, dir], { encoding: "utf8" });
+	if (chk.status !== 0 || !chk.stdout || chk.stdout.startsWith("NOPYARROW")) skip("order 検定（pyarrow 無し）");
+	else {
+		const o = JSON.parse(chk.stdout);
+		ok(o.none.rg === 6 && o.none.row0 === 0 && o.none.rows === N, `order none: 入力順（row0=${o.none.row0}・6 行グループ）`);
+		ok(o.str.ovRatio === 0 && o.hilbert.ovRatio < o.morton.ovRatio && o.morton.ovRatio < o.none.ovRatio, `order: 行グループ bbox の重なり率 none ${o.none.ovRatio.toFixed(2)} > morton ${o.morton.ovRatio.toFixed(2)} > hilbert ${o.hilbert.ovRatio.toFixed(2)} > str ${o.str.ovRatio}`);
+		ok(Object.values(o).every(v => v.consistent), "並べ替え後も各行の属性と幾何が一致");
+	}
 }
 
 // ---- 行グループ分割 -------------------------------------------------------------------------
-const r3 = await toGeoParquet(pbf, { gpu: false, rowGroupSize: 3 });
+const r3 = await toGeoParquet(pbf, { gpu: false, rowGroupSize: 3, order: "none" });
 ok(r3.buffer.length > buf.length, "rowGroupSize=3 で 3 行グループ（footer が大きい）");
 
 // ---- CLI --------------------------------------------------------------------------------------
 const CLI = new URL("../bin/geopbf.mjs", import.meta.url).pathname;
 const run = (...args) => execFileSync(process.execPath, [CLI, ...args], { encoding: "utf8" });
 const inPath = join(dir, "fix.geopbf"); writeFileSync(inPath, Buffer.from(pbf.arrayBuffer));
-const out = run("parquet", inPath, join(dir, "cli.parquet"), "--no-gpu", "--compression", "none");
+const out = run("parquet", inPath, join(dir, "cli.parquet"), "--no-gpu", "--compression", "none", "--order", "none");
 ok(/features 8/.test(out) && /CPU/.test(out) && /Polygon/.test(out), "CLI parquet: 実行報告");
 const cliBuf = readFileSync(join(dir, "cli.parquet"));
 ok(cliBuf.subarray(0, 4).toString() === "PAR1" && cliBuf.length === r0.buffer.length, "CLI parquet: 出力（無圧縮）がライブラリ経路と同じ長さ");

@@ -193,7 +193,8 @@ Builds a PMTiles v3 archive of Mapbox Vector Tiles from a GeoPBF and its Gint. R
 
 ### `await toGeoParquet(pbf, [options])` (`geopbf/geoparquet`)
 Writes GeoParquet 1.1: `geometry` (WKB, little-endian), an optional `bbox` struct column with statistics, and one column per property key (`BOOLEAN` / `INT64` / `DOUBLE` / `TIMESTAMP(ms, UTC)` / `UTF8` / `JSON`, nested keys flattened to `a.b`). Resolves to `{ buffer, stats, geo }`.
-* **`codec`** (`"gzip"` | `"none"`), **`rowGroupSize`** (65536), **`bboxColumn`** (`"auto"`: omitted for point-only data, else written; `true`/`false` to force), **`geometryName`** (`"geometry"`), **`gpu`**, **`compress`**.
+* **`order`** (`"str"` default | `"hilbert"` | `"morton"` | `"none"`): spatial row ordering by feature-bbox centre so row-group `bbox` statistics are tight (STR packs them disjointly); `"none"` keeps input order (row index = fid). Features without geometry go last. Recorded as key-value `geopbf:order`.
+* **`codec`** (`"gzip"` | `"none"`), **`rowGroupSize`** (65536; also the STR page size), **`bboxColumn`** (`true` default; `"auto"` omits it for point-only data; `false` never), **`geometryName`** (`"geometry"`), **`gpu`**, **`compress`**.
 * Coordinates are the GeoPBF integers divided by `10^precision`, converted to doubles exactly (same bits as JavaScript division). Empty geometries become nulls. Header fields travel as `geopbf:name/description/license/attribution` key-values.
 
 ### Lower-level pieces (`geopbf/convert`)
@@ -201,7 +202,7 @@ Writes GeoParquet 1.1: `geometry` (WKB, little-endian), an optional `bbox` struc
 
 ### CLI
 `geopbf pmtiles <in.geopbf> <out.pmtiles> [--minzoom N] [--maxzoom N] [--extent N] [--buffer N] [--layer name] [--gint in.gint] [--lod-bias N] [--workers N] [--drop-rate R] [--gpu | --no-gpu]`
-`geopbf parquet <in.geopbf> <out.parquet> [--compression gzip|none] [--row-group N] [--gpu | --no-gpu]`
+`geopbf parquet <in.geopbf> <out.parquet> [--compression gzip|none] [--row-group N] [--order str|hilbert|morton|none] [--no-bbox] [--gpu | --no-gpu]`
 
 ### Verification
 `npm run test:convert` — CPU references (exact division vs BigInt, table error bound, clipping, MVT, PMTiles directory), end-to-end PMTiles (shared-border identity across zooms, hole winding, de-duplication, CLI) and GeoParquet (WKB round-trip, pyarrow read-back when available, CLI).
