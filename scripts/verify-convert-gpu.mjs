@@ -41,12 +41,17 @@ const browser = await pw.chromium.launch({
 	headless: !process.argv.includes("--show"),
 	...(exe ? { executablePath: exe } : {}),
 	ignoreDefaultArgs: ["--headless"],
-	args: ["--headless=new", "--no-sandbox", "--enable-unsafe-webgpu", "--enable-features=Vulkan", "--use-angle=vulkan", "--use-vulkan=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"],
+	args: ["--headless=new", "--no-sandbox", "--enable-unsafe-webgpu", "--enable-features=Vulkan", "--use-angle=vulkan", "--use-vulkan=swiftshader", "--enable-unsafe-swiftshader", "--use-webgpu-adapter=swiftshader", "--ignore-gpu-blocklist"],
 });
 const page = await browser.newPage();
+console.log(`chromium ${browser.version()} (${exe ?? "playwright default"})`);
+
 page.on("console", m => { if (m.type() === "error" && !/404/.test(m.text())) console.error("[page]", m.text()); else if (bench && m.text().startsWith("[bench]")) console.log(m.text()); });
 page.on("pageerror", e => console.error("[pageerror]", e.message));
 await page.goto(bench ? `http://localhost:${port}/tests/t-convert-bench.html?data=${encodeURIComponent(bench.name)}&maxzoom=${bench.maxzoom}${bench.extra}` : `http://localhost:${port}/tests/t-convert-gpu.html`);
+// WebGPU が立たない時の切り分け（CI 用）：navigator.gpu の有無・通常/fallback adapter の応答
+const diag = await page.evaluate(async () => { if (!navigator.gpu) return "navigator.gpu なし"; const a = await navigator.gpu.requestAdapter().catch(e => "err:" + e.message); const f = await navigator.gpu.requestAdapter({ forceFallbackAdapter: true }).catch(e => "err:" + e.message); const info = (x) => x && typeof x === "object" ? JSON.stringify({ vendor: x.info?.vendor, arch: x.info?.architecture, fallback: x.isFallbackAdapter }) : String(x); return `adapter ${info(a)} / fallback ${info(f)}`; });
+console.log("webgpu:", diag);
 await page.waitForFunction(() => window.__result, null, { timeout: 1800000 });
 const r = await page.evaluate(() => window.__result);
 await browser.close(); srv.close();

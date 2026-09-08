@@ -29,7 +29,9 @@ export async function findGPU(opts = {}) {
 export async function getDevice(opts = {}) {
 	const gpu = await findGPU(opts);
 	if (!gpu) return null;
-	const adapter = await gpu.requestAdapter({ powerPreference: "high-performance" }).catch(() => null);
+	// 通常の adapter が無ければ fallback（SwiftShader などのソフトウェア実装）も試す＝CI の headless Chromium はこちら。出力は同じバイト列
+	const adapter = await gpu.requestAdapter({ powerPreference: "high-performance" }).catch(() => null)
+		?? await gpu.requestAdapter({ forceFallbackAdapter: true }).catch(() => null);
 	if (!adapter) return null;
 	// 大きなストレージバッファ（数千万頂点＝数百 MB）を1本で束ねたい＝アダプタ上限まで要求。断られたら既定で。
 	const requiredLimits = {};
