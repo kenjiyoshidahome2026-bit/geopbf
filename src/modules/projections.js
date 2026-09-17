@@ -77,9 +77,12 @@ export function geoEqualEarth() {
 	const A1 = 1.340264, A2 = -0.081106, A3 = 0.000893, A4 = 0.003796, M = sqrt(3) / 2, R3 = 2 * sqrt(3);
 	const fy = (th) => { const t2 = th * th; return th * (A1 + t2 * (A2 + t2 * t2 * (A3 + A4 * t2))); };          // A1θ + A2θ³ + A3θ⁷ + A4θ⁹
 	const dy = (th) => { const t2 = th * th, t6 = t2 * t2 * t2; return A1 + 3 * A2 * t2 + 7 * A3 * t6 + 9 * A4 * t6 * t2; };   // dy/dθ
-	const wrap = x => x === 180 ? 180 : ((((x + 180) % 360) + 360) % 360) - 180;   // +180 は保つ（-180 へ書き換えると図郭の東縁が西縁へ飛ぶ・modules/antimeridianCut.js の fix と同じ約束）
+	const wrap = x => x === 180 ? 180 : ((((x + 180) % 360) + 360) % 360) - 180;   // +180 は保つ（-180 へ書き換えると図郭の東縁が西縁へ飛ぶ）
+	// 経度は畳まない＝中央経線を振ると図郭の外へ出る点がそのまま外に出る。縁で折り返すのは描き手の仕事
+	// （preview の repeat＝±360° ずらして重ね描き＋図郭で切り抜き）。ここで畳むと、縫い目を跨ぐ環が
+	// 図の反対側へ飛んで世界を横断する帯になる。
 	const p = ([ln, lt]) => {
-		const l = wrap(ln + r[0]) * rad, th = asin(M * sin(max(-90, min(90, lt + r[1])) * rad));
+		const l = (ln + r[0]) * rad, th = asin(M * sin(max(-90, min(90, lt + r[1])) * rad));
 		return [t[0] + s * R3 * l * cos(th) / (3 * dy(th)), t[1] - s * fy(th)];
 	};
 	p.invert = ([px, py]) => {

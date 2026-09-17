@@ -2,7 +2,7 @@ import { isObject } from "../modules/utility.js";
 import { geoOrthographic, geoMercator, geoEquirectangular, geoEqualEarth } from "../modules/projections.js";
 
 export function preview(self, canvas, props = {}) {
-	if (!self.length) return null;
+	if (!self.length && !props.outline) return null;   // 地物ゼロでも outline だけは描ける（図郭は図法の産物＝データではない）
 	// canvas も props も「オブジェクト」＝isObject では見分かない（HTMLCanvasElement/OffscreenCanvas を渡すと
 	// props として飲み込まれ、projection も fill も黙って捨てられていた）。描き口があるかで判定する。
 	if (!(canvas && typeof canvas.getContext === "function")) { if (isObject(canvas)) props = canvas; canvas = null; }
@@ -14,7 +14,7 @@ export function preview(self, canvas, props = {}) {
 
 	const projection = props.projection || "";
 	const proj = projection.match(/orthographic/i) ? geoOrthographic() : projection.match(/mercator/i) ? geoMercator() : projection.match(/equal.?earth|eqearth/i) ? geoEqualEarth() : geoEquirectangular();
-	let bbox = props.bbox || self.bbox;
+	let bbox = props.bbox || self.bbox || [-180, -90, 180, 90];   // 地物ゼロ（outline だけ）でも図郭は描ける
 	// antimeridian-split datasets can have bbox spanning ~360° even when features don't individually
 	// cross the antimeridian (e.g. western Alaska polygons at -180° + Near Islands at +173°E).
 	// Fix: 3D-vector centroid of small-span features → re-wrap all bbox coords relative to that
@@ -72,16 +72,45 @@ export function preview(self, canvas, props = {}) {
 	ctx.setTransform(dpr, 0, 0, dpr, 0, 0);   // 同じ canvas へ層を重ねて呼ぶ（多層の地図）と ctx.scale は前回の変換に積まれる＝毎回置き換える
 
 	if (props.background) { ctx.fillStyle = props.background; ctx.fillRect(0, 0, width, height); }
-	ctx.lineWidth = props.lineWidth || 1 / dpr;
-	ctx.fillStyle = props.fill || "#ccc";
-	ctx.strokeStyle = props.stroke || "#000";
 
 	const out = b => (bbox[0] > b[2] || bbox[1] > b[3] || bbox[2] < b[0] || bbox[3] < b[1]);
 	const minDist = props.minDist || 1;
 	const minDist2 = minDist * minDist;
 
+	// 図郭＝いまの窓（中央経線 ±180°・bbox の緯度幅）の輪郭。図法が決めるものでデータではないので、ここで作る。
+	// repeat の切り抜きと props.outline（海の塗り／外枠）で共用する。
+	const framePath = () => {
+		const cap = projection.match(/mercator/i) ? 85 : 90;             // メルカトルの極は無限遠＝図郭は緯度で頭打ち
+		const lat0 = Math.max(bbox[1], -cap), lat1 = Math.min(bbox[3], cap);
+		ctx.beginPath();
+		let i = 0;
+		const edge = (ln, lt) => { const q = proj([ln, lt]); if (q) ctx[i++ ? "lineTo" : "moveTo"](q[0], q[1]); };
+		for (let t = lat0; t <= lat1; t++) edge(cx - 180, t);
+		for (let t = -180; t <= 180; t += 2) edge(cx + t, lat1);
+		for (let t = lat1; t >= lat0; t--) edge(cx + 180, t);
+		for (let t = 180; t >= -180; t -= 2) edge(cx + t, lat0);
+		ctx.closePath();
+	};
+	// outline={fill,stroke,lineWidth}＝図郭を塗る（地物の下）／縁取る（地物の上）。海の色と外枠はこれで足りる
+	const outline = props.outline || null;
+	if (outline && outline.fill) { framePath(); ctx.fillStyle = outline.fill; ctx.fill(); }
+
+	// repeat＝世界を ±360° ずらして重ね描きし、図郭で切り抜く。中央経線を振った世界図で、縫い目を跨ぐ地物が
+	// 片側で途切れず、反対の縁から続けて出る＝**幾何を切り直さずに**振れる（切るのは encoder の仕事であって、
+	// 図を描くだけならこちらが速い：切り直しの再エンコードが要らない）。x が経度に単調な図法（擬円筒・正距円筒・
+	// メルカトル）でだけ意味を持つので、呼び手が明示した時だけ効かせる。
+	const repeat = !!props.repeat;
+	if (repeat) { ctx.save(); framePath(); ctx.clip(); }
+
+	ctx.lineWidth = props.lineWidth || 1 / dpr;
+	ctx.fillStyle = props.fill || "#ccc";
+	ctx.strokeStyle = props.stroke || "#000";
+
+	for (const off of repeat ? [0, -360, 360] : [0]) {
+	if (off) proj.rotate([-cx + off, -cy, 0]);
 	self.forEach((n, map) => {
-		if (out(self.getBbox(n))) return;
+		const b = self.getBbox(n);
+		if (out([b[0] + off, b[1], b[2] + off, b[3]])) return;
 		ctx.beginPath();
 
 		const drawCoords = (pos, type) => {
@@ -158,6 +187,9 @@ export function preview(self, canvas, props = {}) {
 		if (map[2] < 2 || map[2] > 3) ctx.fill();
 		ctx.stroke();
 	});
+	}
+	if (repeat) { proj.rotate([-cx, -cy, 0]); ctx.restore(); }
+	if (outline && outline.stroke) { framePath(); ctx.strokeStyle = outline.stroke; ctx.lineWidth = outline.lineWidth || props.lineWidth || 1 / dpr; ctx.stroke(); }
 
 	return ownCanvas ? offcanvas.transferToImageBitmap() : canvas;
 }

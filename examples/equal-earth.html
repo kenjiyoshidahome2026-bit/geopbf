@@ -10,7 +10,7 @@
      同一オリジンでなければブラウザが拒むため（src/ を同じオリジンから配る）。
 
      初回は 10m の 4 層で約 8.7 MB を取りに行く（以後はブラウザの HTTP キャッシュ）。
-     中央経線を振ると、経度を回してから GeoPBF に焼き直す＝新しい縫い目での切断は encoder（antimeridianCut）に任せる。 -->
+     中央経線はスライダで振れる。幾何は切り直さない＝preview の repeat（世界を ±360° ずらして重ね描きし図郭で切り抜く）。 -->
 <html lang="ja">
 <head>
 <meta charset="utf-8">
@@ -41,14 +41,7 @@
 <header>
 	<h1>Equal Earth — Natural Earth 10m</h1>
 	<span id="toggles"></span>
-	<label>中央経線
-		<select id="lon0">
-			<option value="0" selected>0°（グリニッジ）</option>
-			<option value="11">11°E（ヨーロッパ中心）</option>
-			<option value="150">150°E（太平洋中心）</option>
-			<option value="-100">100°W（アメリカ中心）</option>
-		</select>
-	</label>
+	<label>中央経線 <input id="lon0" type="range" min="-180" max="180" step="5" value="0"><span id="lon0v">0°</span></label>
 	<button id="png">PNG で保存</button>
 </header>
 <div id="map"><canvas id="cv"></canvas></div>
@@ -69,33 +62,24 @@ const geopbf = createGeopbf();
 const NE = new URLSearchParams(location.search).get("ne") || "https://naturalearth.s3.amazonaws.com/";
 const OCEAN = "#d7e7f2", COAST = "#8d8471", LAND = "#f3eee2";
 
-// 描く順に並べた層。url 付き＝Natural Earth の shapefile、gen 付き＝その場で作る幾何（図郭・経緯線）。
+// 描く順に並べた層。url 付き＝Natural Earth の shapefile、gen 付き＝その場で作る幾何（経緯線）。
+// 図郭（海の塗りと外枠）は層ではなく preview の outline＝図法が決める形でデータではない。
 const LAYERS = [
-	{ id: "frame",      name: "図郭",   gen: frame,     fill: OCEAN,        stroke: OCEAN,     lineWidth: 1,   fixed: true },
 	{ id: "graticule",  name: "経緯線", gen: graticule, fill: "transparent", stroke: "#a9c3d4", lineWidth: 0.5 },
-	{ id: "land",       name: "陸地",   url: NE + "10m_physical/ne_10m_land.zip",                      fill: LAND,   stroke: COAST,     lineWidth: 0.5 },
-	{ id: "lakes",      name: "湖",     url: NE + "10m_physical/ne_10m_lakes.zip",                     fill: OCEAN,  stroke: "#9dc0d6", lineWidth: 0.3 },
-	{ id: "rivers",     name: "河川",   url: NE + "10m_physical/ne_10m_rivers_lake_centerlines.zip",   fill: "transparent", stroke: "#8ab4d0", lineWidth: 0.5 },
+	{ id: "land",       name: "陸地",   url: NE + "10m_physical/ne_10m_land.zip",                        fill: LAND,          stroke: COAST,     lineWidth: 0.5 },
+	{ id: "lakes",      name: "湖",     url: NE + "10m_physical/ne_10m_lakes.zip",                       fill: OCEAN,         stroke: "#9dc0d6", lineWidth: 0.3 },
+	{ id: "rivers",     name: "河川",   url: NE + "10m_physical/ne_10m_rivers_lake_centerlines.zip",     fill: "transparent", stroke: "#8ab4d0", lineWidth: 0.5 },
 	{ id: "boundaries", name: "国境",   url: NE + "10m_cultural/ne_10m_admin_0_boundary_lines_land.zip", fill: "transparent", stroke: "#9a8d77", lineWidth: 0.6 },
-	{ id: "edge",       name: "外枠",   gen: frame,     fill: "transparent", stroke: "#6f7c85", lineWidth: 1,   fixed: true },
 ];
 const on = new Map(LAYERS.map(l => [l.id, true]));   // 層ごとの表示／非表示
+let lon0 = 0;                                        // 中央経線
 
 // ── その場で作る幾何 ──────────────────────────────────────────────────────────
-// 図郭＝λ=±180°・φ=±90° の矩形（経緯度では矩形・Equal Earth では上下が極線・左右が曲線になる）。
-// 1° 刻みに打っておけば、どの図法に載せても縁が折れ線で滑らかに出る（頂点間は直線で描かれるため）。
-function frame() {
-	const ring = [];
-	for (let lat = -90; lat <= 90; lat++) ring.push([-180, lat]);
-	for (let lon = -180; lon <= 180; lon++) ring.push([lon, 90]);
-	for (let lat = 90; lat >= -90; lat--) ring.push([180, lat]);
-	for (let lon = 180; lon >= -180; lon--) ring.push([lon, -90]);
-	return fc([{ type: "Polygon", coordinates: [ring] }]);
-}
-// 経緯線＝30° ごと。子午線は 1° 刻み、緯線は 2° 刻みで打つ（±90° の極線と ±180° は図郭が描く）。
+// 経緯線＝30° ごと。子午線は 1° 刻み、緯線は 2° 刻みで打つ（±90° の極線と窓の縁は図郭＝outline が描く）。
+// 中央経線に依らず経緯度のまま 1 度作るだけ＝振るのは描画側（repeat）の仕事。
 function graticule() {
 	const g = [];
-	for (let lon = -150; lon <= 150; lon += 30) {
+	for (let lon = -150; lon <= 180; lon += 30) {
 		const c = []; for (let lat = -90; lat <= 90; lat++) c.push([lon, lat]);
 		g.push({ type: "LineString", coordinates: c });
 	}
@@ -109,44 +93,32 @@ const fc = geoms => ({ type: "FeatureCollection", features: geoms.map(g => ({ ty
 
 // ── 読み込み ──────────────────────────────────────────────────────────────────
 // gint:false＝identify 用の位相は焼かない（この図は描くだけ）。nocache:true＝IndexedDB を触らない。
-const load = (src, name) => geopbf(src, { name, gint: false, nocache: true });
-
-// 中央経線を振る＝経度を回してから GeoPBF に焼き直す。新しい縫い目を跨ぐ環の切断は encoder の
-// antimeridian 切断がやる（窓ごとの半平面クリップ＝何回跨いでも割れる）＝自前で縫い目を縫わない。
-async function recut(pbf, lon0) {
-	if (!lon0) return pbf;
-	const gj = pbf.geojson;
-	const w = x => ((x - lon0 + 180) % 360 + 360) % 360 - 180;
-	const walk = c => typeof c[0] === "number" ? [w(c[0]), c[1]] : c.map(walk);
-	for (const f of gj.features) if (f.geometry) f.geometry.coordinates = walk(f.geometry.coordinates);
-	return load(gj, pbf.name());
-}
+const load = (src, name, opts) => geopbf(src, { name, gint: false, nocache: true, ...opts });
 
 const cv = document.getElementById("cv"), statusEl = document.getElementById("status");
-const raw = new Map();     // id → 経度を回す前の GeoPBF（振り直しのたびに取り直さないため）
-const shown = new Map();   // id → いま描く GeoPBF
-let lon0 = 0;
-
-function say(msg) { statusEl.textContent = msg; }
+const shown = new Map();   // id → 描く GeoPBF
+let blank;                 // 地物ゼロの GeoPBF＝図郭（outline）だけを描くための器
+const say = msg => { statusEl.textContent = msg; };
 
 async function boot() {
-	for (const l of LAYERS) if (l.gen) { raw.set(l.id, await load(l.gen(), l.id)); shown.set(l.id, raw.get(l.id)); }
+	blank = await load({ type: "FeatureCollection", features: [] }, "frame");
+	for (const l of LAYERS) if (l.gen) shown.set(l.id, await load(l.gen(), l.id));
 	draw();
 	const t0 = performance.now();
 	let done = 0, features = 0;
-	await Promise.all(LAYERS.filter(l => l.url).map(async l => {
+	const urls = LAYERS.filter(l => l.url);
+	await Promise.all(urls.map(async l => {
 		const t = performance.now();
 		try {
 			const pbf = await load(l.url, l.id);
-			raw.set(l.id, pbf);
-			shown.set(l.id, await recut(pbf, lon0));
+			shown.set(l.id, pbf);
 			features += pbf.length;
 			console.log(`[equal-earth] ${l.id}: ${pbf.length} features, ${(performance.now() - t).toFixed(0)} ms`);
 		} catch (e) {
 			console.error(`[equal-earth] ${l.id}:`, e);
 			l.failed = true;
 		}
-		say(`loading… ${++done}/${LAYERS.filter(x => x.url).length}`);
+		say(`loading… ${++done}/${urls.length}`);
 		draw();
 	}));
 	const failed = LAYERS.filter(l => l.failed).map(l => l.name);
@@ -155,7 +127,9 @@ async function boot() {
 }
 
 // ── 描画 ──────────────────────────────────────────────────────────────────────
-// 1 枚の canvas に preview() を層の数だけ重ねる。bbox を全層で同じにする＝同じ scale・同じ中心で載る。
+// 1 枚の canvas に preview() を層の数だけ重ねる。bbox を全層で同じ（中央経線 λ0 の窓）にする＝同じ scale・同じ中心で載る。
+// データの層は repeat:true＝preview が世界を ±360° ずらして 3 回描き、図郭で切り抜く。中央経線をどこへ振っても
+// 縫い目を跨ぐ地物が途切れず、**幾何は切り直さない**（＝取り直しも再エンコードも無しで即座に振れる）。
 let lastDraw = 0;
 function draw() {
 	const dpr = devicePixelRatio || 1, box = cv.parentElement.getBoundingClientRect();
@@ -164,12 +138,14 @@ function draw() {
 	ctx.setTransform(1, 0, 0, 1, 0, 0);
 	ctx.clearRect(0, 0, cv.width, cv.height);
 	const t0 = performance.now();
+	const base = { projection: "equalearth", bbox: [lon0 - 180, -90, lon0 + 180, 90], dpr, repeat: true, minDist: 0.6, radius: 0.8 };
+	preview(blank, cv, { ...base, outline: { fill: OCEAN } });                       // 海＝図郭の塗り（いちばん下）
 	for (const l of LAYERS) {
 		const pbf = shown.get(l.id);
 		if (!pbf || !on.get(l.id)) continue;
-		preview(pbf, cv, { projection: "equalearth", bbox: [-180, -90, 180, 90], dpr,
-			fill: l.fill, stroke: l.stroke, lineWidth: l.lineWidth, minDist: 0.6, radius: 0.8 });
+		preview(pbf, cv, { ...base, fill: l.fill, stroke: l.stroke, lineWidth: l.lineWidth });
 	}
+	preview(blank, cv, { ...base, outline: { stroke: "#6f7c85", lineWidth: 1 } });   // 外枠（いちばん上）
 	lastDraw = performance.now() - t0;
 }
 
@@ -181,13 +157,12 @@ for (const l of LAYERS.filter(x => !x.fixed)) {
 	label.querySelector("input").onchange = e => { on.set(l.id, e.target.checked); draw(); };
 	toggles.append(label);
 }
-document.getElementById("lon0").onchange = async e => {
+const lon0el = document.getElementById("lon0"), lon0v = document.getElementById("lon0v");
+lon0el.oninput = e => {
 	lon0 = +e.target.value;
-	say("中央経線を振り直し中…（新しい縫い目で encoder が切り直す）");
-	const t0 = performance.now();
-	for (const l of LAYERS) if (raw.has(l.id)) shown.set(l.id, l.fixed ? raw.get(l.id) : await recut(raw.get(l.id), lon0));   // 図郭は経度対称＝振り直し不要
-	draw();
-	say(`中央経線 ${lon0}° に切り直し ${((performance.now() - t0) / 1000).toFixed(1)} s — 描画 ${lastDraw.toFixed(0)} ms`);
+	lon0v.textContent = `${lon0}°`;
+	draw();                 // データも図郭も作り直さない＝描き直すだけ
+	say(`中央経線 ${lon0}° — 描画 ${lastDraw.toFixed(0)} ms（幾何は切り直していない）`);
 };
 document.getElementById("png").onclick = () => cv.toBlob(b => {
 	const a = document.createElement("a");

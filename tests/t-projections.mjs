@@ -45,7 +45,8 @@ const near = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
 
 	const q = geoEqualEarth().scale(1).translate([0, 0]).rotate([-150, 0, 0]);   // 中央経線 150°E
 	ok(near(q([150, 0])[0], 0), "rotate で中央経線を振れる（150°E が図の中心）");
-	ok(near(q([-30, 0])[0], -bx) && near(q([-31, 0])[0], bx, 2e-2), "振った先の縫い目（-30°）で東西の縁が入れ替わる");
+	// 経度は畳まない＝縫い目の向こうは図郭の外へ出る（縁で折り返すのは描き手＝preview の repeat の仕事）
+	ok(near(q([-30, 0])[0], -bx) && q([-31, 0])[0] < -bx, `振った先の縫い目（-30°）の外は図郭の外（${q([-31, 0])[0].toFixed(3)} < ${(-bx).toFixed(3)}）`);
 
 	const f = geoEqualEarth().fitExtent([[0, 0], [1000, 500]]);
 	ok(near(f([-180, 0])[0], 0) && near(f([180, 0])[0], 1000) && near(f([0, 0])[1], 250), "fitExtent が幅いっぱいに収める");
@@ -82,6 +83,27 @@ for (const [name, p] of [["equirectangular", geoEquirectangular()], ["mercator",
 	const [ex, ey] = proj([-10, -10]);
 	ok(pts.length >= 4 && near(pts[0][0], ex, 1e-6) && near(pts[0][1], ey, 1e-6),
 		`最初の頂点が Equal Earth の像（描画 ${pts[0]?.map(v => v.toFixed(2))} / 期待 ${[ex, ey].map(v => v.toFixed(2))}）`);
+}
+
+// ---- preview(): repeat＝±360° ずらして重ね描き＋図郭で切り抜き ----
+{
+	// 中央経線 150°E（bbox の中心）から見て西の縫い目の外にある地物＝+360° の回で図の東端に出る
+	const far = { type: "FeatureCollection", features: [
+		{ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [[[-40, 0], [-35, 0], [-35, 5], [-40, 5], [-40, 0]]] } },
+	]};
+	const pbf = await new GeoPBF({ name: "t-rep" }).set(far);
+	const run = (repeat) => {
+		const calls = [];
+		const ctx = new Proxy({}, { get: (_, k) => (...a) => calls.push([String(k), ...a]), set: () => true });
+		preview(pbf, { width: 800, height: 400, getContext: () => ctx }, { projection: "equalearth", bbox: [-30, -90, 330, 90], dpr: 1, repeat });
+		return calls;
+	};
+	const off = run(false), on = run(true);
+	ok(!off.some(c => c[0] === "moveTo"), "repeat 無し＝縫い目の外の地物は描かれない（図郭の外）");
+	const after = on.slice(on.findIndex(c => c[0] === "clip") + 1);   // 図郭（clip 用のパス）の点は数えない
+	const pts = after.filter(c => c[0] === "moveTo" || c[0] === "lineTo").map(c => [c[1], c[2]]);
+	ok(pts.length >= 4 && pts.every(p => p[0] > 400), `repeat 有り＝東端に回り込んで描かれる（x ${pts[0]?.[0].toFixed(0)} > 中心 400）`);
+	ok(on.some(c => c[0] === "clip") && on.some(c => c[0] === "save") && on.some(c => c[0] === "restore"), "図郭で切り抜く（save/clip/restore）");
 }
 
 console.log(fails ? `\n${fails} test(s) failed` : "\nall passed");
