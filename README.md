@@ -753,7 +753,8 @@ you pass.
 import { preview } from "geopbf/preview";
 
 preview(pbf, canvas, {
-  projection: "equalearth",        // equirectangular (default) | mercator | orthographic | equalearth
+  projection: "equalearth",        // equirectangular (default) | mercator | orthographic | equalearth,
+                                   // or a projection instance you keep (see below)
   bbox: [lon0 - 180, -90, lon0 + 180, 90],   // the window to fit; omit to use the file's own bbox
   fill: "#f3eee2", stroke: "#8d8471", lineWidth: 0.5,
   dpr: devicePixelRatio, minDist: 0.6,   // minDist = drop ring vertices closer than this many px
@@ -765,6 +766,10 @@ preview(pbf, canvas, {
 Call it once per layer on the same canvas — same `bbox` for all of them means the same scale and centre, so the
 layers stack into one map. Passing no canvas returns an `ImageBitmap` instead (that is what `pbf.preview(props)`
 does from a worker, off the main thread).
+
+`projection` also takes an instance from `geopbf/projections` instead of a name. `preview` configures the one you
+pass — rotate, scale, translate — and leaves it in your hands, so after drawing, `proj.invert([x, y])` turns a
+pointer position into a longitude and latitude without you re-deriving the scale it used.
 
 `repeat` is how the central meridian moves without touching the data. Set `bbox` to the window you want
 (`[lon0-180, …, lon0+180]`), and `preview` draws every layer three times — at −360°, 0° and +360° — clipped to the
@@ -787,7 +792,9 @@ into ±180: past the seam a point simply projects outside the frame, and folding
 straight from Natural Earth's S3 (CORS-open), converts them in this library's decoder workers, and draws land,
 lakes, rivers, boundaries, a graticule and the map frame as Equal Earth — 3,353 features and about a million
 vertices, ~2 s to fetch and convert, ~0.55 s a redraw at 1400×790 (three passes). No server, no pre-baked data, no
-tiles, and the central-meridian slider is pure redraw.
+tiles, and the central-meridian slider is pure redraw. `apps/equal` is the same map from the other end: `build.mjs`
+bakes those four layers once — decoder, then the Gint LOD down to one pixel (944,000 → 73,003 vertices, 0.44 MB) —
+and the page draws that with no library at all, same look and same controls.
 
 Cutting geometry at a new seam is the encoder's job, not the renderer's, and it is there when you want the data
 itself re-centred: rotate the longitudes and hand the result back to `GeoPBF.set()`. The cut

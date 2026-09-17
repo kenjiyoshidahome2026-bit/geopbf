@@ -43,6 +43,7 @@ export function geoMercator() {
 		const w = e[1][0] - e[0][0], h = e[1][1] - e[0][1];
 		return s = min(w, h) / (2 * PI), t = [e[0][0] + w / 2, e[0][1] + h / 2], p;
 	};
+	p.latCap = 85;   // 極は無限遠＝図郭（preview の outline/repeat）はこの緯度で頭打ちにする
 	return p;
 }
 export function geoEquirectangular() {

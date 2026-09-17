@@ -106,5 +106,23 @@ for (const [name, p] of [["equirectangular", geoEquirectangular()], ["mercator",
 	ok(on.some(c => c[0] === "clip") && on.some(c => c[0] === "save") && on.some(c => c[0] === "restore"), "図郭で切り抜く（save/clip/restore）");
 }
 
+// ---- preview(): 図法そのものを渡すと、仕込まれた scale/translate のまま手元に残る（画面座標→経緯度） ----
+{
+	const fc = { type: "FeatureCollection", features: [
+		{ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [139.7, 35.7] } },
+	]};
+	const pbf = await new GeoPBF({ name: "t-proj2" }).set(fc);
+	const calls = [];
+	const ctx = new Proxy({}, { get: (_, k) => (...a) => calls.push([String(k), ...a]), set: () => true });
+	const proj = geoEqualEarth();
+	preview(pbf, { width: 900, height: 500, getContext: () => ctx }, { projection: proj, bbox: [-180, -90, 180, 90], dpr: 1 });
+	const moved = calls.find(c => c[0] === "moveTo");        // 点は moveTo→arc で打たれる（moveTo は半径ぶん右）
+	const arc = calls.find(c => c[0] === "arc");
+	const back = proj.invert([arc[1], arc[2]]);
+	ok(near(back[0], 139.7, 1e-6) && near(back[1], 35.7, 1e-6),
+		`渡した図法で画面座標→経緯度が引ける（${back.map(v => v.toFixed(3))}）`);
+	ok(moved && arc, "点が描かれている");
+}
+
 console.log(fails ? `\n${fails} test(s) failed` : "\nall passed");
 process.exit(fails ? 1 : 0);

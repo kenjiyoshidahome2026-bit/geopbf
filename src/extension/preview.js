@@ -12,8 +12,16 @@ export function preview(self, canvas, props = {}) {
 	const width  = canvas ? canvas.width  / dpr : size;
 	const height = canvas ? canvas.height / dpr : size;
 
+	// projection＝名前（文字列）か、modules/projections.js の図法そのもの。図法を渡すと、preview が仕込んだ
+	// rotate/scale/translate のまま呼び手の手元に残る＝描いた後に proj.invert で画面座標→経緯度が引ける
+	// （画面から経緯度を読むために scale の式を呼び手が写す、という二重持ちを無くす）。
 	const projection = props.projection || "";
-	const proj = projection.match(/orthographic/i) ? geoOrthographic() : projection.match(/mercator/i) ? geoMercator() : projection.match(/equal.?earth|eqearth/i) ? geoEqualEarth() : geoEquirectangular();
+	const given = typeof projection?.rotate === "function";   // 図法は「プロパティを持つ関数」＝typeof は "function"
+	const name = given ? "" : String(projection);
+	const proj = given ? projection
+		: name.match(/orthographic/i) ? geoOrthographic()
+		: name.match(/mercator/i) ? geoMercator()
+		: name.match(/equal.?earth|eqearth/i) ? geoEqualEarth() : geoEquirectangular();
 	let bbox = props.bbox || self.bbox || [-180, -90, 180, 90];   // 地物ゼロ（outline だけ）でも図郭は描ける
 	// antimeridian-split datasets can have bbox spanning ~360° even when features don't individually
 	// cross the antimeridian (e.g. western Alaska polygons at -180° + Near Islands at +173°E).
@@ -80,7 +88,7 @@ export function preview(self, canvas, props = {}) {
 	// 図郭＝いまの窓（中央経線 ±180°・bbox の緯度幅）の輪郭。図法が決めるものでデータではないので、ここで作る。
 	// repeat の切り抜きと props.outline（海の塗り／外枠）で共用する。
 	const framePath = () => {
-		const cap = projection.match(/mercator/i) ? 85 : 90;             // メルカトルの極は無限遠＝図郭は緯度で頭打ち
+		const cap = proj.latCap ?? 90;                                   // メルカトルの極は無限遠＝図郭は緯度で頭打ち（p.latCap）
 		const lat0 = Math.max(bbox[1], -cap), lat1 = Math.min(bbox[3], cap);
 		ctx.beginPath();
 		let i = 0;
