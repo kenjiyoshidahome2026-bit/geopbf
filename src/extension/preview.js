@@ -1,9 +1,11 @@
 import { isObject } from "../modules/utility.js";
-import { geoOrthographic, geoMercator, geoEquirectangular } from "../modules/projections.js";
+import { geoOrthographic, geoMercator, geoEquirectangular, geoEqualEarth } from "../modules/projections.js";
 
 export function preview(self, canvas, props = {}) {
 	if (!self.length) return null;
-	if (isObject(canvas)) { props = canvas; canvas = null; }
+	// canvas も props も「オブジェクト」＝isObject では見分かない（HTMLCanvasElement/OffscreenCanvas を渡すと
+	// props として飲み込まれ、projection も fill も黙って捨てられていた）。描き口があるかで判定する。
+	if (!(canvas && typeof canvas.getContext === "function")) { if (isObject(canvas)) props = canvas; canvas = null; }
 	const dpr = props.dpr || 1;
 	const ownCanvas = !canvas;
 	const size = props.size || 512;
@@ -11,7 +13,7 @@ export function preview(self, canvas, props = {}) {
 	const height = canvas ? canvas.height / dpr : size;
 
 	const projection = props.projection || "";
-	const proj = projection.match(/orthographic/i) ? geoOrthographic() : projection.match(/mercator/i) ? geoMercator() : geoEquirectangular();
+	const proj = projection.match(/orthographic/i) ? geoOrthographic() : projection.match(/mercator/i) ? geoMercator() : projection.match(/equal.?earth|eqearth/i) ? geoEqualEarth() : geoEquirectangular();
 	let bbox = props.bbox || self.bbox;
 	// antimeridian-split datasets can have bbox spanning ~360° even when features don't individually
 	// cross the antimeridian (e.g. western Alaska polygons at -180° + Near Islands at +173°E).
@@ -59,13 +61,15 @@ export function preview(self, canvas, props = {}) {
 	const cy = (bbox[1] + bbox[3]) / 2;
 	const lonSpan = Math.max(bbox[2] - bbox[0], 1e-3);
 	const latSpan = Math.max(bbox[3] - bbox[1], 1e-3);
-	const scale = Math.min(width / lonSpan, height / latSpan) * (180 / Math.PI) * 0.9;
+	// 図法の赤道での x/λ（proj.k・経緯度線形の図法は 1）で割る＝Equal Earth のように x が λ に比例しない図法でも
+	// 同じ bbox が同じ幅に収まる（旧＝k を見ないので Equal Earth だけ 86% に縮んで描かれた）。
+	const scale = Math.min(width / lonSpan, height / latSpan) * (180 / Math.PI) * 0.9 / (proj.k || 1);
 	proj.rotate([-cx, -cy, 0]).scale(scale).translate([width / 2, height / 2]);
 	if (props.scale) proj.scale(props.scale);
 
 	const offcanvas = ownCanvas ? new OffscreenCanvas(width * dpr, height * dpr) : canvas;
 	const ctx = offcanvas.getContext("2d");
-	if (dpr !== 1) ctx.scale(dpr, dpr);
+	ctx.setTransform(dpr, 0, 0, dpr, 0, 0);   // 同じ canvas へ層を重ねて呼ぶ（多層の地図）と ctx.scale は前回の変換に積まれる＝毎回置き換える
 
 	if (props.background) { ctx.fillStyle = props.background; ctx.fillRect(0, 0, width, height); }
 	ctx.lineWidth = props.lineWidth || 1 / dpr;

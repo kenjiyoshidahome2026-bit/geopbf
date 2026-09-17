@@ -744,6 +744,43 @@ Same deal for D3 (`d3.geoPath` over `r.geojson`), Observable notebooks, or anyth
 `loadGeopbf` returns `{ geojson, name, description, license, attribution, minZoom, maxZoom }`. See
 `examples/cesium.html`.
 
+### 8.6 No map library at all — `preview()` and projections
+
+`geopbf/preview` draws a GeoPBF onto a canvas directly: no tiles, no map library, nothing of the DOM but the canvas
+you pass.
+
+```js
+import { preview } from "geopbf/preview";
+
+preview(pbf, canvas, {
+  projection: "equalearth",        // equirectangular (default) | mercator | orthographic | equalearth
+  bbox: [-180, -90, 180, 90],      // what to fit; omit to use the file's own bbox
+  fill: "#f3eee2", stroke: "#8d8471", lineWidth: 0.5,
+  dpr: devicePixelRatio, minDist: 0.6,   // minDist = drop ring vertices closer than this many px
+});
+```
+
+Call it once per layer on the same canvas — same `bbox` for all of them means the same scale and centre, so the
+layers stack into one map. Passing no canvas returns an `ImageBitmap` instead (that is what `pbf.preview(props)`
+does from a worker, off the main thread).
+
+The projections are their own module, `geopbf/projections` — `geoEquirectangular`, `geoMercator`,
+`geoOrthographic`, `geoEqualEarth`, each a d3-shaped `p([lon, lat]) → [x, y]` with `invert` / `rotate` / `scale` /
+`translate` / `fitExtent`. Equal Earth (Šavrič–Patterson–Jenny 2018) is the equal-area pseudo-cylindrical that a
+world map usually wants: parallels are straight lines, the poles are lines 0.59× the equator's length, and area is
+exact — the Jacobian is `cos φ` to 5e-9 (`tests/t-projections.mjs` measures it rather than trusting the formula).
+`p.k` is x/λ at the equator (0.861 for Equal Earth, 1 for the two cylindricals); `preview()` divides its own scale
+by it so a projection whose x is not proportional to λ still fills the same box.
+
+`examples/equal-earth.html` is the whole pipeline in one file: it fetches four Natural Earth **10m** shapefile zips
+straight from Natural Earth's S3 (CORS-open), converts them in this library's decoder workers, and draws land,
+lakes, rivers, boundaries, a graticule and the map frame as Equal Earth — 3,353 features and about a million
+vertices, ~1.9 s to fetch and convert, ~0.3 s a redraw at 1400×790. No server, no pre-baked data, no tiles.
+
+One caveat, with a world map at least: the seam is the data's own. Re-centring on another meridian means re-cutting
+every ring at the new seam, and the encoder's antimeridian cut assumes a ring crosses the seam at most twice — a
+coastline that weaves across it (Greenland, once 150°E is the centre) comes back joined instead of split.
+
 ---
 
 ## 9. Storage injection

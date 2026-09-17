@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<!-- geopbf で Equal Earth の世界図を描く最小デモ（サーバ無し・データはブラウザが直に取る）。
+     Natural Earth 10m の shapefile（zip）を naturalearth.s3.amazonaws.com（CORS: *）から fetch し、
+     geopbf の shape decoder（worker）で GeoPBF に変換してから extension/preview.js で canvas に重ね描きする。
+     図法＝modules/projections.js の geoEqualEarth（Šavrič–Patterson–Jenny 2018・等積）。
+
+     起動: リポジトリルートを静的配信して開く（`npx vite` でも `python3 -m http.server` でも可・裸の import は
+     一つも無いのでバンドラは要らない）→ /examples/equal-earth.html
+     file:// は不可・他の例と違って esm.sh も不可＝decoder は module worker で動き、worker のスクリプトは
+     同一オリジンでなければブラウザが拒むため（src/ を同じオリジンから配る）。
+
+     初回は 10m の 4 層で約 8.7 MB を取りに行く（以後はブラウザの HTTP キャッシュ）。
+     中央経線は 0°＝Natural Earth が ±180 で切ってある向きのまま描く（回すには縫い目の切り直しが要る）。 -->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>geopbf × Equal Earth — Natural Earth 10m</title>
+<style>
+	:root { color-scheme: light; --ink: #2b2b2b; --line: #d8d2c6; }
+	* { box-sizing: border-box; }
+	html, body { margin: 0; height: 100%; }
+	body { display: flex; flex-direction: column; background: #faf8f4; color: var(--ink);
+		font: 13px/1.5 system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif; }
+	header { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center;
+		padding: 8px 14px; border-bottom: 1px solid var(--line); background: #fff; }
+	h1 { font-size: 14px; font-weight: 600; margin: 0 8px 0 0; letter-spacing: .02em; }
+	label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; cursor: pointer; }
+	.sw { width: 10px; height: 10px; border-radius: 2px; border: 1px solid rgba(0,0,0,.25); }
+	select, button { font: inherit; padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; background: #fff; }
+	button { cursor: pointer; }
+	#map { flex: 1; min-height: 0; position: relative; }
+	canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+	footer { padding: 5px 14px; border-top: 1px solid var(--line); background: #fff; font-size: 12px;
+		color: #5d5d5d; display: flex; gap: 16px; flex-wrap: wrap; }
+	#status { font-variant-numeric: tabular-nums; }
+	a { color: #3564c0; }
+</style>
+</head>
+<body>
+<header>
+	<h1>Equal Earth — Natural Earth 10m</h1>
+	<span id="toggles"></span>
+	<button id="png">PNG で保存</button>
+</header>
+<div id="map"><canvas id="cv"></canvas></div>
+<footer>
+	<span id="status">loading…</span>
+	<span>データ: <a href="https://www.naturalearthdata.com/" target="_blank" rel="noreferrer">Natural Earth</a> 10m（public domain）</span>
+	<span>図法: Equal Earth（Šavrič, Patterson &amp; Jenny 2018）</span>
+</footer>
+
+<script type="module">
+import { createGeopbf } from "../src/index.js";
+import { preview } from "../src/extension/preview.js";
+
+// createGeopbf() を引数無しで呼ぶ＝素の provider（直 fetch・キャッシュ無し）。私有 API は一切使わない。
+const geopbf = createGeopbf();
+
+// 取得元は Natural Earth 公式の S3（CORS: *）。?ne=<base> で自前ミラーにも向けられる（末尾 / 付き・以下の相対パスは同じ）。
+const NE = new URLSearchParams(location.search).get("ne") || "https://naturalearth.s3.amazonaws.com/";
+const OCEAN = "#d7e7f2", COAST = "#8d8471", LAND = "#f3eee2";
+
+// 描く順に並べた層。url 付き＝Natural Earth の shapefile、gen 付き＝その場で作る幾何（図郭・経緯線）。
+const LAYERS = [
+	{ id: "frame",      name: "図郭",   gen: frame,     fill: OCEAN,        stroke: OCEAN,     lineWidth: 1,   fixed: true },
+	{ id: "graticule",  name: "経緯線", gen: graticule, fill: "transparent", stroke: "#a9c3d4", lineWidth: 0.5 },
+	{ id: "land",       name: "陸地",   url: NE + "10m_physical/ne_10m_land.zip",                      fill: LAND,   stroke: COAST,     lineWidth: 0.5 },
+	{ id: "lakes",      name: "湖",     url: NE + "10m_physical/ne_10m_lakes.zip",                     fill: OCEAN,  stroke: "#9dc0d6", lineWidth: 0.3 },
+	{ id: "rivers",     name: "河川",   url: NE + "10m_physical/ne_10m_rivers_lake_centerlines.zip",   fill: "transparent", stroke: "#8ab4d0", lineWidth: 0.5 },
+	{ id: "boundaries", name: "国境",   url: NE + "10m_cultural/ne_10m_admin_0_boundary_lines_land.zip", fill: "transparent", stroke: "#9a8d77", lineWidth: 0.6 },
+	{ id: "edge",       name: "外枠",   gen: frame,     fill: "transparent", stroke: "#6f7c85", lineWidth: 1,   fixed: true },
+];
+const on = new Map(LAYERS.map(l => [l.id, true]));   // 層ごとの表示／非表示
+
+// ── その場で作る幾何 ──────────────────────────────────────────────────────────
+// 図郭＝λ=±180°・φ=±90° の矩形（経緯度では矩形・Equal Earth では上下が極線・左右が曲線になる）。
+// 1° 刻みに打っておけば、どの図法に載せても縁が折れ線で滑らかに出る（頂点間は直線で描かれるため）。
+function frame() {
+	const ring = [];
+	for (let lat = -90; lat <= 90; lat++) ring.push([-180, lat]);
+	for (let lon = -180; lon <= 180; lon++) ring.push([lon, 90]);
+	for (let lat = 90; lat >= -90; lat--) ring.push([180, lat]);
+	for (let lon = 180; lon >= -180; lon--) ring.push([lon, -90]);
+	return fc([{ type: "Polygon", coordinates: [ring] }]);
+}
+// 経緯線＝30° ごと。子午線は 1° 刻み、緯線は 2° 刻みで打つ（±90° の極線と ±180° は図郭が描く）。
+function graticule() {
+	const g = [];
+	for (let lon = -150; lon <= 150; lon += 30) {
+		const c = []; for (let lat = -90; lat <= 90; lat++) c.push([lon, lat]);
+		g.push({ type: "LineString", coordinates: c });
+	}
+	for (let lat = -60; lat <= 60; lat += 30) {
+		const c = []; for (let lon = -180; lon <= 180; lon += 2) c.push([lon, lat]);
+		g.push({ type: "LineString", coordinates: c });
+	}
+	return fc(g);
+}
+const fc = geoms => ({ type: "FeatureCollection", features: geoms.map(g => ({ type: "Feature", properties: {}, geometry: g })) });
+
+// ── 読み込み ──────────────────────────────────────────────────────────────────
+// gint:false＝identify 用の位相は焼かない（この図は描くだけ）。nocache:true＝IndexedDB を触らない。
+const load = (src, name) => geopbf(src, { name, gint: false, nocache: true });
+
+const cv = document.getElementById("cv"), statusEl = document.getElementById("status");
+const shown = new Map();   // id → 描く GeoPBF
+
+function say(msg) { statusEl.textContent = msg; }
+
+async function boot() {
+	for (const l of LAYERS) if (l.gen) shown.set(l.id, await load(l.gen(), l.id));
+	draw();
+	const t0 = performance.now();
+	let done = 0, features = 0;
+	await Promise.all(LAYERS.filter(l => l.url).map(async l => {
+		const t = performance.now();
+		try {
+			const pbf = await load(l.url, l.id);
+			shown.set(l.id, pbf);
+			features += pbf.length;
+			console.log(`[equal-earth] ${l.id}: ${pbf.length} features, ${(performance.now() - t).toFixed(0)} ms`);
+		} catch (e) {
+			console.error(`[equal-earth] ${l.id}:`, e);
+			l.failed = true;
+		}
+		say(`loading… ${++done}/${LAYERS.filter(x => x.url).length}`);
+		draw();
+	}));
+	const failed = LAYERS.filter(l => l.failed).map(l => l.name);
+	say(`${features.toLocaleString("en-US")} features / ${((performance.now() - t0) / 1000).toFixed(1)} s で取得・変換`
+		+ (failed.length ? `（取得できなかった層: ${failed.join(", ")}）` : "") + ` — 描画 ${lastDraw.toFixed(0)} ms`);
+}
+
+// ── 描画 ──────────────────────────────────────────────────────────────────────
+// 1 枚の canvas に preview() を層の数だけ重ねる。bbox を全層で同じにする＝同じ scale・同じ中心で載る。
+let lastDraw = 0;
+function draw() {
+	const dpr = devicePixelRatio || 1, box = cv.parentElement.getBoundingClientRect();
+	cv.width = Math.round(box.width * dpr); cv.height = Math.round(box.height * dpr);
+	const ctx = cv.getContext("2d");
+	ctx.setTransform(1, 0, 0, 1, 0, 0);
+	ctx.clearRect(0, 0, cv.width, cv.height);
+	const t0 = performance.now();
+	for (const l of LAYERS) {
+		const pbf = shown.get(l.id);
+		if (!pbf || !on.get(l.id)) continue;
+		preview(pbf, cv, { projection: "equalearth", bbox: [-180, -90, 180, 90], dpr,
+			fill: l.fill, stroke: l.stroke, lineWidth: l.lineWidth, minDist: 0.6, radius: 0.8 });
+	}
+	lastDraw = performance.now() - t0;
+}
+
+// ── 操作 ──────────────────────────────────────────────────────────────────────
+const toggles = document.getElementById("toggles");
+for (const l of LAYERS.filter(x => !x.fixed)) {
+	const label = document.createElement("label");
+	label.innerHTML = `<input type="checkbox" checked><span class="sw" style="background:${l.fill !== "transparent" ? l.fill : l.stroke}"></span>${l.name}`;
+	label.querySelector("input").onchange = e => { on.set(l.id, e.target.checked); draw(); };
+	toggles.append(label);
+}
+document.getElementById("png").onclick = () => cv.toBlob(b => {
+	const a = document.createElement("a");
+	a.href = URL.createObjectURL(b); a.download = "equal-earth.png"; a.click();
+	setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+let resizeTimer = 0;
+addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(draw, 150); });
+
+boot();
+</script>
+</body>
+</html>
