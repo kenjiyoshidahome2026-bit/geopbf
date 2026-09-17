@@ -744,6 +744,68 @@ Same deal for D3 (`d3.geoPath` over `r.geojson`), Observable notebooks, or anyth
 `loadGeopbf` returns `{ geojson, name, description, license, attribution, minZoom, maxZoom }`. See
 `examples/cesium.html`.
 
+### 8.6 No map library at all — `preview()` and projections
+
+`geopbf/preview` draws a GeoPBF onto a canvas directly: no tiles, no map library, nothing of the DOM but the canvas
+you pass.
+
+```js
+import { preview } from "geopbf/preview";
+
+preview(pbf, canvas, {
+  projection: "equalearth",        // equirectangular (default) | mercator | orthographic | equalearth,
+                                   // or a projection instance you keep (see below)
+  bbox: [lon0 - 180, -90, lon0 + 180, 90],   // the window to fit; omit to use the file's own bbox
+  fill: "#f3eee2", stroke: "#8d8471", lineWidth: 0.5,
+  dpr: devicePixelRatio, minDist: 0.6,   // minDist = drop ring vertices closer than this many px
+  repeat: true,                    // draw the world at ±360° too and clip to the frame
+  outline: { fill: "#d7e7f2" },    // paint the frame itself (fill below the features, stroke above)
+});
+```
+
+Call it once per layer on the same canvas — same `bbox` for all of them means the same scale and centre, so the
+layers stack into one map. Passing no canvas returns an `ImageBitmap` instead (that is what `pbf.preview(props)`
+does from a worker, off the main thread).
+
+`projection` also takes an instance from `geopbf/projections` instead of a name. `preview` configures the one you
+pass — rotate, scale, translate — and leaves it in your hands, so after drawing, `proj.invert([x, y])` turns a
+pointer position into a longitude and latitude without you re-deriving the scale it used.
+
+`repeat` is how the central meridian moves without touching the data. Set `bbox` to the window you want
+(`[lon0-180, …, lon0+180]`), and `preview` draws every layer three times — at −360°, 0° and +360° — clipped to the
+map frame, so a feature that runs off one edge comes back in at the other. Nothing is re-cut, re-encoded or
+re-fetched: swinging the world from Greenwich to 150°E is one redraw. `outline` draws the frame, which belongs to
+the projection rather than to any dataset: `{ fill }` paints it under the features (the ocean), `{ stroke }` over
+them (the neat line), and a GeoPBF with no features at all is enough to ask for just that.
+
+The projections are their own module, `geopbf/projections` — `geoEquirectangular`, `geoMercator`,
+`geoOrthographic`, `geoEqualEarth`, each a d3-shaped `p([lon, lat]) → [x, y]` with `invert` / `rotate` / `scale` /
+`translate` / `fitExtent`. Equal Earth (Šavrič–Patterson–Jenny 2018) is the equal-area pseudo-cylindrical that a
+world map usually wants: parallels are straight lines, the poles are lines 0.59× the equator's length, and area is
+exact — the Jacobian is `cos φ` to 5e-9 (`tests/t-projections.mjs` measures it rather than trusting the formula).
+`p.k` is x/λ at the equator (0.861 for Equal Earth, 1 for the two cylindricals); `preview()` divides its own scale
+by it so a projection whose x is not proportional to λ still fills the same box. None of them fold longitude back
+into ±180: past the seam a point simply projects outside the frame, and folding it in is the renderer's job
+(`repeat`) — a projection that wrapped would tear every ring that crosses the seam into a band across the map.
+
+`examples/equal-earth.html` is the whole pipeline in one file: it fetches four Natural Earth **10m** shapefile zips
+straight from Natural Earth's S3 (CORS-open), converts them in this library's decoder workers, and draws land,
+lakes, rivers, boundaries, a graticule and the map frame as Equal Earth — 3,353 features and about a million
+vertices, ~2 s to fetch and convert, ~0.55 s a redraw at 1400×790 (three passes). No server, no pre-baked data, no
+tiles, and the central-meridian slider is pure redraw. `apps/equal` is the same map from the other end: `build.mjs`
+bakes those four layers once — decoder, then the Gint LOD down to one pixel (944,000 → 73,003 vertices, 0.44 MB) —
+and the page draws that with no library at all, same look and same controls.
+
+Cutting geometry at a new seam is the encoder's job, not the renderer's, and it is there when you want the data
+itself re-centred: rotate the longitudes and hand the result back to `GeoPBF.set()`. The cut
+(`modules/antimeridianCut.js`) unwraps each ring's longitudes and clips it per 360° window with
+Sutherland–Hodgman, so a coastline that weaves across the seam many times (Greenland re-centred on 150°E crosses it
+ten times; Antarctica eight) splits correctly, and a ring that wraps a pole is closed with the ±180 → pole pillar of
+RFC 7946. Two conventions worth knowing: the latitude where a cut lands is the great-circle crossing, not a linear
+interpolation (vertices are joined by great circles everywhere else in the encoder too), and separate pieces on the
+same side of the seam come back as one ring joined by zero-width edges along it — the same thing tile clipping does,
+and invisible to fill, area and point-in-polygon.
+
 ---
 
 ## 9. Storage injection
