@@ -23,7 +23,7 @@ export const trim = _ => ("" + _).replace(/\s+/g, " ").replace(/(^\s+|\s+$)/g, "
 export const strfix = _ => trim(_).normalize('NFKC');
 export const tostr = async _ => _ ? isDOM(_) ? _.outerHTML : isFunction(_) ? isAsync(_)? await _(): _() :
 	isArray(_) ? _.map(trim).filter(t => t).join("<br/>") : String(_) : "";
-export const comma = _ => { if (typeof _ === 'number') return _.toLocaleString();
+export const comma = _ => { if (typeof _ === 'number') return _.toLocaleString('en-US');
 	let s = String(_ ?? "").replace(/,/g, ""); const parts = s.split(".");
 	parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 	return parts.join(".");

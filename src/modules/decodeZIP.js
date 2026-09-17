@@ -103,7 +103,8 @@ export async function decodeZIP(source, target = null, encoding = null) {
 			const crc = cv.getUint32(off + 16, true), cSiz = cv.getUint32(off + 20, true), uSiz = cv.getUint32(off + 24, true);
 			const nLen = cv.getUint16(off + 28, true), eLen = cv.getUint16(off + 30, true), cLen = cv.getUint16(off + 32, true);
 			const loc = cv.getUint32(off + 42, true);
-			const name = new TextDecoder(encoding || (flags & 0x0800) ? 'utf-8' : 'shift-jis').decode(cd.subarray(off + 46, off + 46 + nLen)).normalize("NFC");
+			// bit 11（UTF-8 フラグ）が立っていれば UTF-8。無ければ encoding（既定 shift-jis）で読む＝旧: 優先順位の取り違えで encoding 指定が常に utf-8 になっていた
+			const name = new TextDecoder((flags & 0x0800) ? 'utf-8' : (encoding || 'shift-jis')).decode(cd.subarray(off + 46, off + 46 + nLen)).normalize("NFC");
 
 			off += 46 + nLen + eLen + cLen;
 			if (name.endsWith('/')) continue;

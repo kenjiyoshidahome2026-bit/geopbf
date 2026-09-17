@@ -78,7 +78,7 @@ async function decompress(u8, codec, uncompressedSize) {
 	if (codec === 1) return snappy(u8);
 	if (codec === 2) return inflate(u8, "gzip");
 	if (codec === 6) return inflate(u8, "zstd");
-	throw new Error("parquet: unsupported codec " + (CODEC_NAME[codec] ?? codec) + "（none/snappy/gzip/zstd）");
+	throw new Error("parquet: unsupported codec " + (CODEC_NAME[codec] ?? codec) + " (none/snappy/gzip/zstd)");
 }
 
 // RLE/bit-packed hybrid → Int32Array(n)（bit 幅 w）
@@ -144,7 +144,7 @@ function parseLogical(v) {   // LogicalType union → 名前（＋詳細）
 
 export async function readParquet(u8) {
 	const n = u8.length;
-	if (n < 12 || String.fromCharCode(u8[n - 4], u8[n - 3], u8[n - 2], u8[n - 1]) !== "PAR1") throw new Error("parquet: PAR1 の末尾署名が無い");
+	if (n < 12 || String.fromCharCode(u8[n - 4], u8[n - 3], u8[n - 2], u8[n - 1]) !== "PAR1") throw new Error("parquet: missing PAR1 trailer magic");
 	const metaLen = new DataView(u8.buffer, u8.byteOffset).getUint32(n - 8, true);
 	const meta = new TReader(u8, n - 8 - metaLen).struct({
 		2: (r) => r.list((r) => r.struct({ 4: str })),
@@ -210,7 +210,7 @@ export async function readParquet(u8) {
 					const nonNull = levels ? levels.reduce((s, v) => s + (v === leaf.maxDef ? 1 : 0), 0) : numV;
 					let vals;
 					if (enc === 0) vals = decodePlain(body, 0, leaf.type, nonNull, leaf.typeLength).out;
-					else if (enc === 2 || enc === 8) { if (!dict) throw new Error("辞書ページが無い"); const w = body[0]; const idx = decodeHybrid(body, 1, body.length, w, nonNull); vals = new Array(nonNull); for (let k = 0; k < nonNull; k++) vals[k] = dict[idx[k]]; }
+					else if (enc === 2 || enc === 8) { if (!dict) throw new Error("parquet: dictionary page missing"); const w = body[0]; const idx = decodeHybrid(body, 1, body.length, w, nonNull); vals = new Array(nonNull); for (let k = 0; k < nonNull; k++) vals[k] = dict[idx[k]]; }
 					else throw new Error("unsupported encoding " + enc);
 					let vi = 0;
 					for (let k = 0; k < numV; k++) {
