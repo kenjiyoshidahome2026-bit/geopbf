@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<!-- apps/equal ── Natural Earth 10m を Equal Earth 図法で描く単一ページ。外部取得も worker も無し：
+     データは build.mjs が geopbf の decoder と gint の LOD で 1 画素まで間引いて焼いた data.json（約 0.44 MB）。
+     図法・逆変換・±360° の重ね描き＋図郭の切り抜きはこのファイル内に素で書いてある（依存ゼロ）。
+     ライブラリ経由で実データを毎回変換する版は examples/equal-earth.html（geopbf の src をそのまま使う）。
+     起動: このディレクトリを静的配信して index.html を開く（fetch のため file:// は不可）。 -->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Equal Earth 10m</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+	:root {
+		--ground: #f7f4ee; --ink: #23282c; --dim: #6b7378; --rule: #ddd6c9;
+		--ocean: #dae8f2; --land: #f2ece0; --coast: #8c8371; --lake: #cbe0ee; --river: #8fb6d2;
+		--border: #a4977f; --grat: #b8ccd9; --neat: #6a767e; --accent: #b4552d;
+	}
+	:root:not([data-theme="light"]) { }
+	@media (prefers-color-scheme: dark) {
+		:root:not([data-theme="light"]) {
+			--ground: #101418; --ink: #e8e4dc; --dim: #93a0a8; --rule: #253038;
+			--ocean: #15232e; --land: #353d45; --coast: #93a2ac; --lake: #1d3746; --river: #3f6b88;
+			--border: #7b7161; --grat: #26404f; --neat: #55646e; --accent: #d97f4f;
+		}
+	}
+	:root[data-theme="dark"] {
+		--ground: #101418; --ink: #e8e4dc; --dim: #93a0a8; --rule: #253038;
+		--ocean: #15232e; --land: #353d45; --coast: #93a2ac; --lake: #1d3746; --river: #3f6b88;
+		--border: #7b7161; --grat: #26404f; --neat: #55646e; --accent: #d97f4f;
+	}
+	* { box-sizing: border-box; }
+	html, body { height: 100%; }
+	body { margin: 0; background: var(--ground); color: var(--ink); display: flex; flex-direction: column;
+		font: 400 14px/1.5 "IBM Plex Sans", system-ui, -apple-system, "Hiragino Kaku Gothic ProN", sans-serif; }
+	header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; padding: 10px 16px 8px;
+		border-bottom: 1px solid var(--rule); }
+	h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: .04em; }
+	h1 span { color: var(--dim); font-weight: 400; }
+	.spacer { flex: 1 1 auto; }
+	.layers { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+	label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; font-size: 13px; color: var(--dim); }
+	label input { accent-color: var(--accent); margin: 0; }
+	.key { width: 11px; height: 11px; border-radius: 2px; border: 1px solid rgba(128,128,128,.4); }
+	.meridian { display: flex; align-items: center; gap: 8px; flex: 1 1 260px; min-width: 200px; }
+	.meridian input[type=range] { flex: 1 1 auto; accent-color: var(--accent); min-width: 120px; }
+	output, .num { font-variant-numeric: tabular-nums; color: var(--ink); font-size: 13px; }
+	main { flex: 1 1 auto; min-height: 0; position: relative; padding: 0 16px; }
+	canvas { position: absolute; inset: 0 16px; width: calc(100% - 32px); height: 100%; }
+	footer { display: flex; flex-wrap: wrap; gap: 4px 18px; padding: 8px 16px; border-top: 1px solid var(--rule);
+		font-size: 12px; color: var(--dim); }
+	footer b { font-weight: 600; color: var(--ink); }
+	a { color: var(--accent); }
+	@media (max-width: 560px) { h1 { width: 100%; } .layers { order: 3; } }
+</style>
+</head>
+<body>
+
+<header>
+	<h1>Equal Earth <span>· Natural Earth 10m</span></h1>
+	<div class="meridian">
+		<label for="lon0" style="color:var(--dim)">中央経線</label>
+		<input id="lon0" type="range" min="-180" max="180" step="1" value="0" aria-label="中央経線">
+		<output id="lon0v" for="lon0">0°</output>
+	</div>
+	<div class="spacer"></div>
+	<div class="layers" id="layers"></div>
+</header>
+<main><canvas id="cv"></canvas></main>
+<footer>
+	<span id="readout" class="num">カーソルの位置：—</span>
+	<span><b id="vcount">—</b> 頂点（10m を gint の LOD で 1 画素まで間引き）</span>
+	<span>図法: Equal Earth（Šavrič, Patterson &amp; Jenny 2018）・等積</span>
+	<span>データ: <a href="https://www.naturalearthdata.com/" target="_blank" rel="noreferrer">Natural Earth</a> 10m（public domain）</span>
+</footer>
+
+<script type="module">
+const DATA = /*__BLOB__*/ await (await fetch("./data.json")).json();
+
+// ── Equal Earth（Šavrič–Patterson–Jenny 2018）＝擬円筒の等積図法 ─────────────────
+const A1 = 1.340264, A2 = -0.081106, A3 = 0.000893, A4 = 0.003796, M = Math.sqrt(3) / 2, R3 = 2 * Math.sqrt(3), RAD = Math.PI / 180;
+const fy = t => { const t2 = t * t; return t * (A1 + t2 * (A2 + t2 * t2 * (A3 + A4 * t2))); };
+const dy = t => { const t2 = t * t, t6 = t2 * t2 * t2; return A1 + 3 * A2 * t2 + 7 * A3 * t6 + 9 * A4 * t6 * t2; };
+const BX = Math.PI * R3 / (3 * A1), BY = fy(Math.PI / 3);   // 図郭の半幅・半高（scale=1）
+
+// ── データ（Int16 の 0.01° 格子）を展開 ────────────────────────────────────────
+const b64 = s => { const bin = atob(s), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new Int16Array(u.buffer); };
+const LAYERS = [
+	{ id: "land",       name: "陸地", key: "--land",   fill: "--land",  stroke: "--coast",  w: 0.6 },
+	{ id: "lakes",      name: "湖",   key: "--lake",   fill: "--lake",  stroke: "--river",  w: 0.4 },
+	{ id: "rivers",     name: "河川", key: "--river",  fill: null,      stroke: "--river",  w: 0.6 },
+	{ id: "boundaries", name: "国境", key: "--border", fill: null,      stroke: "--border", w: 0.7 },
+];
+let vertices = 0;
+for (const l of LAYERS) {
+	const d = DATA[l.id];
+	l.xy = b64(d.xy); l.rings = d.rings; l.groups = d.groups; l.poly = d.kind === "poly";
+	l.on = true;
+	// 環ごとの経度範囲（回り込みの間引き用）と先頭位置
+	l.start = new Int32Array(l.rings.length); l.lo = new Float32Array(l.rings.length); l.hi = new Float32Array(l.rings.length);
+	for (let r = 0, p = 0; r < l.rings.length; r++) {
+		l.start[r] = p; let lo = Infinity, hi = -Infinity;
+		for (let i = 0; i < l.rings[r]; i++) { const x = l.xy[(p + i) * 2] / 100; if (x < lo) lo = x; if (x > hi) hi = x; }
+		l.lo[r] = lo; l.hi[r] = hi; p += l.rings[r];
+	}
+	vertices += l.xy.length / 2;
+}
+document.getElementById("vcount").textContent = vertices.toLocaleString("en-US");
+
+// ── 描画 ──────────────────────────────────────────────────────────────────────
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+let lon0 = 0, S = 1, CX = 0, CY = 0;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const project = (lon, lat, off) => {
+	const l = (lon - lon0 + off) * RAD, th = Math.asin(M * Math.sin(lat * RAD));
+	return [CX + S * R3 * l * Math.cos(th) / (3 * dy(th)), CY - S * fy(th)];
+};
+const framePath = () => {
+	ctx.beginPath();
+	let i = 0;
+	const at = (ln, lt) => { const q = project(ln, lt, 0); ctx[i++ ? "lineTo" : "moveTo"](q[0], q[1]); };
+	for (let t = -90; t <= 90; t++) at(lon0 - 180, t);
+	for (let t = -180; t <= 180; t += 2) at(lon0 + t, 90);
+	for (let t = 90; t >= -90; t--) at(lon0 + 180, t);
+	for (let t = 180; t >= -180; t -= 2) at(lon0 + t, -90);
+	ctx.closePath();
+};
+function draw() {
+	const dpr = Math.min(devicePixelRatio || 1, 2), box = cv.getBoundingClientRect();
+	cv.width = Math.round(box.width * dpr); cv.height = Math.round(box.height * dpr);
+	ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+	ctx.clearRect(0, 0, box.width, box.height);
+	S = Math.min(box.width / (2 * BX), box.height / (2 * BY)) * 0.98;
+	CX = box.width / 2; CY = box.height / 2;
+
+	framePath(); ctx.fillStyle = css("--ocean"); ctx.fill();          // 海＝図郭の塗り
+	ctx.save(); framePath(); ctx.clip();                              // 以降は図郭の中だけ
+
+	// 経緯線（30°ごと）
+	ctx.strokeStyle = css("--grat"); ctx.lineWidth = 0.6; ctx.beginPath();
+	for (let lon = -180; lon < 180; lon += 30) for (let k = 0; k <= 180; k++) {
+		const q = project(lon, -90 + k, 0); ctx[k ? "lineTo" : "moveTo"](q[0], q[1]);
+	}
+	for (let lat = -60; lat <= 60; lat += 30) for (let k = 0; k <= 180; k++) {
+		const q = project(-180 + k * 2, lat, 0); ctx[k ? "lineTo" : "moveTo"](q[0], q[1]);
+	}
+	ctx.stroke();
+
+	// 地物＝世界を ±360° ずらして 3 回描く（縫い目を跨ぐ形が反対の縁から続けて出る＝切り直し不要）
+	for (const l of LAYERS) {
+		if (!l.on) continue;
+		ctx.fillStyle = l.fill ? css(l.fill) : "transparent";
+		ctx.strokeStyle = css(l.stroke); ctx.lineWidth = l.w;
+		for (const off of [0, -360, 360]) {
+			let r = 0;
+			for (const groupRings of l.groups) {
+				let drawn = false;
+				ctx.beginPath();
+				for (let g = 0; g < groupRings; g++, r++) {
+					const lo = l.lo[r] - lon0 + off, hi = l.hi[r] - lon0 + off;
+					if (hi < -180 || lo > 180) continue;              // 窓の外＝描かない
+					drawn = true;
+					const s = l.start[r], n = l.rings[r];
+					for (let i = 0; i < n; i++) {
+						const q = project(l.xy[(s + i) * 2] / 100, l.xy[(s + i) * 2 + 1] / 100, off);
+						ctx[i ? "lineTo" : "moveTo"](q[0], q[1]);
+					}
+					if (l.poly) ctx.closePath();
+				}
+				if (!drawn) continue;
+				if (l.poly) ctx.fill();
+				ctx.stroke();
+			}
+		}
+	}
+	ctx.restore();
+	framePath(); ctx.strokeStyle = css("--neat"); ctx.lineWidth = 1; ctx.stroke();   // 外枠
+}
+
+// ── 操作 ──────────────────────────────────────────────────────────────────────
+const layersEl = document.getElementById("layers");
+for (const l of LAYERS) {
+	const label = document.createElement("label");
+	label.innerHTML = `<input type="checkbox" id="chk-${l.id}" checked><span class="key" style="background:var(${l.key})"></span>${l.name}`;
+	label.querySelector("input").addEventListener("change", e => { l.on = e.target.checked; draw(); });
+	layersEl.append(label);
+}
+const slider = document.getElementById("lon0"), lon0v = document.getElementById("lon0v");
+slider.addEventListener("input", e => {
+	lon0 = +e.target.value;
+	lon0v.textContent = `${lon0 > 0 ? lon0 + "°E" : lon0 < 0 ? -lon0 + "°W" : "0°"}`;
+	draw();
+});
+// 逆変換＝カーソルの経緯度（Equal Earth は y から θ を Newton で解く）
+const readout = document.getElementById("readout");
+cv.addEventListener("pointermove", e => {
+	const box = cv.getBoundingClientRect(), x = (e.clientX - box.left - CX) / S, y = (CY - (e.clientY - box.top)) / S;
+	let th = y;
+	for (let i = 0; i < 20; i++) { const d = (fy(th) - y) / dy(th); th -= d; if (Math.abs(d) < 1e-12) break; }
+	const lat = Math.asin(Math.max(-1, Math.min(1, Math.sin(th) / M))) / RAD;
+	const lon = 3 * x * dy(th) / (R3 * Math.cos(th)) / RAD + lon0;
+	const wrapped = ((lon + 180) % 360 + 360) % 360 - 180;
+	const inside = Math.abs(lat) <= 90.0001 && Math.abs(lon - lon0) <= 180.0001;
+	readout.textContent = inside
+		? `カーソルの位置：${Math.abs(lat).toFixed(2)}°${lat >= 0 ? "N" : "S"}  ${Math.abs(wrapped).toFixed(2)}°${wrapped >= 0 ? "E" : "W"}`
+		: "カーソルの位置：図郭の外";
+});
+cv.addEventListener("pointerleave", () => { readout.textContent = "カーソルの位置：—"; });
+
+let t = 0;
+addEventListener("resize", () => { clearTimeout(t); t = setTimeout(draw, 120); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+draw();
+</script>
+</body>
+</html>

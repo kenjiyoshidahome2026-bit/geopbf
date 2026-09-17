@@ -2,3 +2,4 @@
 project_summary.md
 node_modules/
 tests/fixtures/gpkg/gsi-tokyo.gpkg
+apps/equal/.cache/
