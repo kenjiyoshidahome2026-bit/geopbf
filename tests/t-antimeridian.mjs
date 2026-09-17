@@ -9,6 +9,13 @@ const enc = async features => (await new GeoPBF({ name: "t-am" }).set({ type: "F
 const lons = g => { const out = []; const walk = a => typeof a[0] === "number" ? out.push(a[0]) : a.forEach(walk); walk(g.coordinates); return out; };
 const span = r => Math.max(...r) - Math.min(...r);
 const F = (type, coordinates, properties = {}) => ({ type: "Feature", properties, geometry: { type, coordinates } });
+// 出力の不変条件：隣接頂点の経度差 > 180 の辺は残らない（両端とも ±180＝縫い目に沿う極線の柱だけが例外）
+const noJump = g => {
+	const rings = [];
+	const walk = a => typeof a[0]?.[0] === "number" ? rings.push(a) : a.forEach(walk);
+	walk(g.coordinates);
+	return rings.every(r => r.every((p, i) => i === 0 || !(Math.abs(p[0] - r[i - 1][0]) > 180 && !(Math.abs(p[0]) === 180 && Math.abs(r[i - 1][0]) === 180))));
+};
 
 // ① 混符号ポリゴン（エディタ作図/移動産）＝2片の MultiPolygon・各片は縫い目の同じ側で局所的
 const mixed = [[[179.9, 35.0], [-179.9, 35.0], [-179.9, 35.2], [179.9, 35.2], [179.9, 35.0]]];
@@ -79,6 +86,48 @@ const mixed = [[[179.9, 35.0], [-179.9, 35.0], [-179.9, 35.2], [179.9, 35.2], [1
 	const south = [[0, -80], [-90, -80], [180, -80], [90, -80], [0, -80]];
 	const [h] = await enc([F("Polygon", [south])]);
 	ok(h && (h.geometry.coordinates[0] ?? []).some(p => p[1] === -90), "南極を囲む環＝[±180,-90] の柱");
+}
+
+// ⑧ 縫い目を 3 回以上跨ぐ環＝跨ぎの数だけ割れる（旧＝交点を 2 つだけ対にしていたので割れず、
+//    ±180 を結ぶ辺が残って世界を横断する帯になった。中央経線を振った世界図で露見・2026-09-17）
+{
+	// 東へ 3 本の歯を出す櫛（歯の出入りで 6 回跨ぐ）。片は縫い目の東西で 2 つ＝東側の 3 本の歯は縫い目上の
+	// 幅ゼロの辺で繋がった 1 環になる（convert/clip.js のタイル切り出しと同じ SH の流儀・塗りも面積も変わらない）
+	const comb = [[175, 0], [185, 0], [185, 1], [175, 1], [175, 2], [185, 2], [185, 3], [175, 3], [175, 4], [185, 4], [185, 5], [175, 5], [175, 0]];
+	const [f] = await enc([F("Polygon", [structuredClone(comb)])]);
+	const g = f.geometry;
+	ok(g.type === "MultiPolygon" && g.coordinates.length === 2, `6 回跨ぐ櫛＝東西 2 片（実際: ${g.type}×${g.coordinates.length ?? "?"}）`);
+	ok(lons(g).every(x => x >= -180 && x <= 180), "全経度が [-180,180] 内");
+	ok(noJump(g), "どの片にも「世界を横断する辺」が残らない");
+	const teeth = lons(g).filter(x => x === -175).length;
+	ok(teeth === 6, `東片に歯が 3 本残る（-175° の頂点 ${teeth} 個）`);
+	const area = r => { let s = 0; const u = r.map(([x, y]) => [x < -90 ? x + 360 : x, y]); for (let i = 0; i < u.length - 1; i++) s += u[i][0] * u[i + 1][1] - u[i + 1][0] * u[i][1]; return Math.abs(s) / 2; };
+	const sum = g.coordinates.reduce((s, poly) => s + area(poly[0]), 0);
+	// 縫い目の緯度は大円の交点＝経緯度の直線より外へ膨らむ分だけ面積が増える（0.1 deg² 未満）。切り落としは無い
+	ok(sum >= area(comb) && sum - area(comb) < 0.1, `面積が保存される（元 ${area(comb).toFixed(3)} / 片の和 ${sum.toFixed(3)} deg²・差は大円の膨らみ）`);
+}
+// ⑨ 極を囲む環が縫い目の近くでジグザグする（跨ぎ 3 回）＝柱で閉じたうえで縫い目で割れる（回した南極の海岸線の型）
+{
+	const ring = [[0, -80], [60, -80], [120, -80], [175, -80], [-175, -79], [175, -78], [-175, -77], [-120, -78], [-60, -79], [0, -80]];
+	const [f] = await enc([F("Polygon", [structuredClone(ring)])]);
+	const g = f.geometry;
+	ok(lons(g).every(x => x >= -180 && x <= 180), "全経度が [-180,180] 内");
+	ok(noJump(g), "極を囲む環も世界を横断する辺を残さない（極線 ±180 の柱を除く）");
+	const pts = [];
+	const walk = a => typeof a[0] === "number" ? pts.push(a) : a.forEach(walk);
+	walk(g.coordinates);
+	ok(pts.some(p => p[1] === -90), "南極の柱で閉じている");
+}
+
+// ⑩ 経度 0 を渡ってから縫い目に達する線＝縁の ±180 は「跨ぐ手前の点の側」で決まる
+//    （旧＝線の先頭の符号で決めており、西から来て東で跨ぐ線は縁が -180 側に付いて世界を横断した）
+{
+	const [f] = await enc([F("LineString", [[-170, 0], [-90, 5], [90, 10], [179, 20], [-179, 21]])]);
+	const g = f.geometry;
+	ok(g.type === "MultiLineString" && g.coordinates.length === 2, `2 本に切れる（実際: ${g.type}×${g.coordinates.length ?? "?"}）`);
+	const [a, b] = g.coordinates ?? [[], []];
+	ok(a.at(-1)?.[0] === 180 && b[0]?.[0] === -180, `東で跨ぐ線の縁は +180→-180（実際 ${a.at(-1)?.[0]} → ${b[0]?.[0]}）`);
+	ok(noJump(g), "線にも世界を横断する辺が残らない");
 }
 
 console.log(fails ? `FAIL (${fails})` : "PASS");

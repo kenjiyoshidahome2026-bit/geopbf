@@ -777,9 +777,16 @@ straight from Natural Earth's S3 (CORS-open), converts them in this library's de
 lakes, rivers, boundaries, a graticule and the map frame as Equal Earth — 3,353 features and about a million
 vertices, ~1.9 s to fetch and convert, ~0.3 s a redraw at 1400×790. No server, no pre-baked data, no tiles.
 
-One caveat, with a world map at least: the seam is the data's own. Re-centring on another meridian means re-cutting
-every ring at the new seam, and the encoder's antimeridian cut assumes a ring crosses the seam at most twice — a
-coastline that weaves across it (Greenland, once 150°E is the centre) comes back joined instead of split.
+The central-meridian selector shows what carrying geometry as geometry buys: rotating the map means rotating the
+longitudes and handing the result back to `GeoPBF.set()`, which re-cuts every ring at the **new** seam on the way in
+— about 1.4 s for the million vertices of those four layers, no re-fetch and no reprojection of anything else. The
+cut (`modules/antimeridianCut.js`) unwraps each ring's longitudes and clips it per 360° window with
+Sutherland–Hodgman, so a coastline that weaves across the seam many times (Greenland re-centred on 150°E crosses it
+ten times; Antarctica eight) splits correctly, and a ring that wraps a pole is closed with the ±180 → pole pillar of
+RFC 7946. Two conventions worth knowing: the latitude where a cut lands is the great-circle crossing, not a linear
+interpolation (vertices are joined by great circles everywhere else in the encoder too), and separate pieces on the
+same side of the seam come back as one ring joined by zero-width edges along it — the same thing tile clipping does,
+and invisible to fill, area and point-in-polygon.
 
 ---
 

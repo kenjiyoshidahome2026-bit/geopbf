@@ -10,7 +10,7 @@
      同一オリジンでなければブラウザが拒むため（src/ を同じオリジンから配る）。
 
      初回は 10m の 4 層で約 8.7 MB を取りに行く（以後はブラウザの HTTP キャッシュ）。
-     中央経線は 0°＝Natural Earth が ±180 で切ってある向きのまま描く（回すには縫い目の切り直しが要る）。 -->
+     中央経線を振ると、経度を回してから GeoPBF に焼き直す＝新しい縫い目での切断は encoder（antimeridianCut）に任せる。 -->
 <html lang="ja">
 <head>
 <meta charset="utf-8">
@@ -41,6 +41,14 @@
 <header>
 	<h1>Equal Earth — Natural Earth 10m</h1>
 	<span id="toggles"></span>
+	<label>中央経線
+		<select id="lon0">
+			<option value="0" selected>0°（グリニッジ）</option>
+			<option value="11">11°E（ヨーロッパ中心）</option>
+			<option value="150">150°E（太平洋中心）</option>
+			<option value="-100">100°W（アメリカ中心）</option>
+		</select>
+	</label>
 	<button id="png">PNG で保存</button>
 </header>
 <div id="map"><canvas id="cv"></canvas></div>
@@ -103,13 +111,26 @@ const fc = geoms => ({ type: "FeatureCollection", features: geoms.map(g => ({ ty
 // gint:false＝identify 用の位相は焼かない（この図は描くだけ）。nocache:true＝IndexedDB を触らない。
 const load = (src, name) => geopbf(src, { name, gint: false, nocache: true });
 
+// 中央経線を振る＝経度を回してから GeoPBF に焼き直す。新しい縫い目を跨ぐ環の切断は encoder の
+// antimeridian 切断がやる（窓ごとの半平面クリップ＝何回跨いでも割れる）＝自前で縫い目を縫わない。
+async function recut(pbf, lon0) {
+	if (!lon0) return pbf;
+	const gj = pbf.geojson;
+	const w = x => ((x - lon0 + 180) % 360 + 360) % 360 - 180;
+	const walk = c => typeof c[0] === "number" ? [w(c[0]), c[1]] : c.map(walk);
+	for (const f of gj.features) if (f.geometry) f.geometry.coordinates = walk(f.geometry.coordinates);
+	return load(gj, pbf.name());
+}
+
 const cv = document.getElementById("cv"), statusEl = document.getElementById("status");
-const shown = new Map();   // id → 描く GeoPBF
+const raw = new Map();     // id → 経度を回す前の GeoPBF（振り直しのたびに取り直さないため）
+const shown = new Map();   // id → いま描く GeoPBF
+let lon0 = 0;
 
 function say(msg) { statusEl.textContent = msg; }
 
 async function boot() {
-	for (const l of LAYERS) if (l.gen) shown.set(l.id, await load(l.gen(), l.id));
+	for (const l of LAYERS) if (l.gen) { raw.set(l.id, await load(l.gen(), l.id)); shown.set(l.id, raw.get(l.id)); }
 	draw();
 	const t0 = performance.now();
 	let done = 0, features = 0;
@@ -117,7 +138,8 @@ async function boot() {
 		const t = performance.now();
 		try {
 			const pbf = await load(l.url, l.id);
-			shown.set(l.id, pbf);
+			raw.set(l.id, pbf);
+			shown.set(l.id, await recut(pbf, lon0));
 			features += pbf.length;
 			console.log(`[equal-earth] ${l.id}: ${pbf.length} features, ${(performance.now() - t).toFixed(0)} ms`);
 		} catch (e) {
@@ -159,9 +181,17 @@ for (const l of LAYERS.filter(x => !x.fixed)) {
 	label.querySelector("input").onchange = e => { on.set(l.id, e.target.checked); draw(); };
 	toggles.append(label);
 }
+document.getElementById("lon0").onchange = async e => {
+	lon0 = +e.target.value;
+	say("中央経線を振り直し中…（新しい縫い目で encoder が切り直す）");
+	const t0 = performance.now();
+	for (const l of LAYERS) if (raw.has(l.id)) shown.set(l.id, l.fixed ? raw.get(l.id) : await recut(raw.get(l.id), lon0));   // 図郭は経度対称＝振り直し不要
+	draw();
+	say(`中央経線 ${lon0}° に切り直し ${((performance.now() - t0) / 1000).toFixed(1)} s — 描画 ${lastDraw.toFixed(0)} ms`);
+};
 document.getElementById("png").onclick = () => cv.toBlob(b => {
 	const a = document.createElement("a");
-	a.href = URL.createObjectURL(b); a.download = "equal-earth.png"; a.click();
+	a.href = URL.createObjectURL(b); a.download = `equal-earth-${lon0}.png`; a.click();
 	setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 });
 let resizeTimer = 0;
